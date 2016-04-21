@@ -1,0 +1,4 @@
+mpi1.dca.ufrn.br slots=1
+mpi2.dca.ufrn.br slots=1
+mpi3.dca.ufrn.br slots=1
+mpi4.dca.ufrn.br slots=1
