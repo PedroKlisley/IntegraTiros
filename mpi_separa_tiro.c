@@ -103,7 +103,7 @@ typedef struct { // 240-byte Trace Header + Data
   float * data; // Data
 } SegyTrace;
 
-void Usage(char* errorMessage);
+void Usage(char* errorMessage, int rank);
 void Check_for_error(int local_ok, char fname[], char message[],
       MPI_Comm comm);
 void Get_args(char* argv[], FILE** traces_SU_pp, SegyTrace** traces_data_pp, FILE** velocity_model_file_pp, uint8_t** velocity_model_data_pp, int my_rank, MPI_Comm comm);
@@ -123,7 +123,7 @@ int main(int argc, char* argv[]) {
    MPI_Comm_rank(comm, &my_rank);
 
    /* Check and get command line args */
-   if (argc != 3) Usage(argv[0]); 
+   if (argc != 3) Usage(argv[0], my_rank); 
    Get_args(argv, &traces_SU, &traces_data, &velocity_model_file, &velocity_model_data, my_rank, comm);
 
    free(traces_data);
@@ -172,9 +172,13 @@ void Check_for_error(
 }  /* Check_for_error */
 
 
-void Usage(char prog_name[]) {
-   fprintf(stderr, "usage: %s ", prog_name); 
-   fprintf(stderr, "<traces_file.su> <veloityModel_file>\n");
+void Usage(char prog_name[], int my_rank) {
+   if(my_rank == 0)
+   {
+   	fprintf(stderr, "usage: %s ", prog_name); 
+   	fprintf(stderr, "<traces_file.su> <velocityModel_file>\n\n");
+   }
+   MPI_Finalize();
    exit(0);
 } 
 
