@@ -103,16 +103,17 @@ typedef struct { // 240-byte Trace Header + Data
   float * data; // Data
 } SegyTrace;
 
+
+
 void Usage(char* errorMessage, int rank);
 void Check_for_error(int local_ok, char fname[], char message[],
       MPI_Comm comm);
-void Get_args(char* argv[], FILE** traces_SU_pp, SegyTrace** traces_data_pp, FILE** velocity_model_file_pp, uint8_t** velocity_model_data_pp, int my_rank, MPI_Comm comm);
+void Get_data(char* argv[], SegyTrace** traces_data_pp, uint8_t** velocity_model_data_pp, int my_rank, int comm_sz, MPI_Comm comm);
 
 
-/*-------------------------------------------------------------------*/
+
 int main(int argc, char* argv[]) {
    int comm_sz, my_rank;
-   FILE *traces_SU, *velocity_model_file;
    SegyTrace* traces_data;
    uint8_t *velocity_model_data;
    MPI_Comm comm;
@@ -124,7 +125,7 @@ int main(int argc, char* argv[]) {
 
    /* Check and get command line args */
    if (argc != 3) Usage(argv[0], my_rank); 
-   Get_args(argv, &traces_SU, &traces_data, &velocity_model_file, &velocity_model_data, my_rank, comm);
+   Get_data(argv, &traces_data, &velocity_model_data, my_rank, comm_sz, comm);
 
    free(traces_data);
    free(velocity_model_data);
@@ -132,24 +133,10 @@ int main(int argc, char* argv[]) {
    MPI_Finalize();
 
    return 0;
-}  /* main */
+} 
 
-/*-------------------------------------------------------------------
- * Function:  Check_for_error
- * Purpose:   Check whether any process has found an error.  If so,
- *            print message and terminate all processes.  Otherwise,
- *            continue execution.
- * In args:   local_ok:  1 if calling process has found an error, 0
- *               otherwise
- *            fname:     name of function calling Check_for_error
- *            message:   message to print if there's an error
- *            comm:      communicator containing processes calling
- *                       Check_for_error:  should be MPI_COMM_WORLD.
- *
- * Note:
- *    The communicator containing the processes calling Check_for_error
- *    should be MPI_COMM_WORLD.
- */
+
+
 void Check_for_error(
       int       local_ok   /* in */, 
       char      fname[]    /* in */,
@@ -198,6 +185,8 @@ void getSegyTrace(SegyTrace* st, long tn, FILE *fsegy) { // Lê tn-ésimo traço
   
 }
 
+
+
 void Build_mpi_type(SegyTrace* st, MPI_Datatype*  input_mpi_t_p  	/* out */) {
 
    int array_of_blocklengths[2] = {TH, 625};
@@ -214,78 +203,28 @@ void Build_mpi_type(SegyTrace* st, MPI_Datatype*  input_mpi_t_p  	/* out */) {
 }  /* Build_mpi_type */
 
 
-void TestHexDump(int my_rank)
-{
-	/*if(my_rank == 0)
-   {
-           
-           int v = 1;
-           int w = 1037;
-           int x = 512;
-           int y = 257;
-           int z = 2;
 
-           FILE *fh = fopen ("TesteBin", "wb");
-           if (fh != NULL) {
-                fwrite (&v, sizeof (v), 1, fh);
-                fwrite (&w, sizeof (w), 1, fh);
-                fwrite (&x, sizeof (x), 1, fh);
-                fwrite (&y, sizeof (y), 1, fh);
-                fwrite (&z, sizeof (z), 1, fh);
-                fclose (fh);
-           }
-           
-   }  */
-}
-
-void Get_args(
+void Get_data(
       char*    		argv[]        		/* in  */,
-      FILE**   		traces_SU_pp   		/* out */,
       SegyTrace**       traces_data_pp		/* out */,
-      FILE**   		velocity_model_file_pp  /* out */,
-      uint8_t**		velocity_model_data_pp  /* out */,
+      uint8_t** 	velocity_model_data_pp  /* out */,
       int 		my_rank			/* in  */,
+      int		comm_sz			/* in  */,
       MPI_Comm 		comm		       	/* in  */) {
 
-   long size, traceNumberLocal;
-   MPI_Datatype segytrace_t;
-
+   long size, traceNumberTotal= 0;
+   //MPI_Datatype segytrace_t;
+   //FILE *velocity_model_file_p;
    if(my_rank == 0)
    {
            //Open files 
-	   *traces_SU_pp = fopen(argv[1], "rb");
-	   if (*traces_SU_pp == NULL) 
+	   FILE *traces_SU_p = fopen(argv[1], "rb");
+	   if (traces_SU_p == NULL) 
 	   {
 	   	fprintf(stderr, "Erro ao abrir arquivo %s\n", argv[1]);
 		exit(0);
 	   }
 	  
-           /*
-	   fseek(*traces_SU_pp, 0, SEEK_SET);
-	   *traces_data_pp = (SegyTrace*) malloc(TQtt*sizeof(SegyTrace));
-
-	   if (fread(*traces_data_pp, 1, 20, *traces_SU_pp) != 20) {
-   		printf("getSegyTrace %li failed!\n", 0);
-    		return;
-  	   }
-
-	   freopen(NULL, "wb", stdout);
-           fwrite(*traces_data_pp, 1, 16, stdout);
-	   */
-	
-	   *velocity_model_file_pp = fopen(argv[2], "rb");
-	   if (*velocity_model_file_pp == NULL)
-	   {
-	   	fprintf(stderr, "Erro ao abrir arquivo %s\n", argv[2]);
-		exit(0);
-	   }
-
-	   fseek(*velocity_model_file_pp, 0, SEEK_END);
-	   size = ftell(*velocity_model_file_pp);
-	   fseek(*velocity_model_file_pp, 0, SEEK_SET);
-	   
-           
-	
 	   //Get Traces
 	   int i;
 	   *traces_data_pp = (SegyTrace*) malloc(TQtt*sizeof(SegyTrace));
@@ -294,126 +233,175 @@ void Get_args(
    		 (*traces_data_pp)[i].data = (float *) malloc(TD);
 	   }	
 	   int curSx = 0, curSy = 0;
-           long traceNumber = 0;
-           uint8_t numberShot = 0;
+	   long traceNumber = 0, curTraceNumber = 0, prevTraceNumber = 0;
+           int numberShot = 0;
            
 
-           getSegyTrace(*traces_data_pp, traceNumber, *traces_SU_pp);
+           getSegyTrace(*traces_data_pp, traceNumber, traces_SU_p);
            curSx = (*traces_data_pp)[traceNumber].sx;
 	   curSy = (*traces_data_pp)[traceNumber].sy;
 	   traceNumber++;
 	
-	  /* 
-	   freopen(NULL, "wb", stdout);
-           fwrite(*traces_data_pp, 1, TH, stdout); 
-           //fwrite(&a, 1, 8, stdout);
-	   fwrite((*traces_data_pp)[0].data, 1, TD, stdout);
-	   */
 
-	   
-        while(numberShot == 0)
-	{
-	   	getSegyTrace(&((*traces_data_pp)[traceNumber]), traceNumber, *traces_SU_pp);
-		if((*traces_data_pp)[traceNumber].sx != curSx || (*traces_data_pp)[traceNumber].sy != curSy)
+	   short curNumShot = 0, dest;
+	   while(1)
+	   {
+		if(traceNumber == TQtt)
 		{
-			numberShot = 1;
-			curSx = (*traces_data_pp)[traceNumber].sx;
-           		curSy = (*traces_data_pp)[traceNumber].sy;
+			printf("\nDistribuição dos traços concluída com sucesso!\n\n");
+			//MPI_Type_free(&segytrace_t);
+		        fclose(traces_SU_p);
+			printf("%d Fechei o arquivo\n", my_rank);
+			break;
 		}
-		traceNumber++;
-        }
-     	   
-	long traceNumber1 = traceNumber - 1;
-        while(numberShot == 1)
-        {
-                getSegyTrace(&((*traces_data_pp)[traceNumber]), traceNumber, *traces_SU_pp);
-                if((*traces_data_pp)[traceNumber].sx != curSx || (*traces_data_pp)[traceNumber].sy != curSy)
-                {
-                        numberShot = 2;
-                        curSx = (*traces_data_pp)[traceNumber].sx;
-                        curSy = (*traces_data_pp)[traceNumber].sy;
-                }
-        	traceNumber++;
-        }
 
-	long traceNumber2 = traceNumber - traceNumber1 - 1;
-	
- 	
-        
-	//Send Traces
-        MPI_Send(&traceNumber2, 1, MPI_LONG, 1, 0, MPI_COMM_WORLD);
-	//Build_mpi_type(*traces_data_pp,&segytrace_t);
-	//MPI_Send(*traces_data_pp, 1, segytrace_t, 1, 0, MPI_COMM_WORLD);
-	printf("Trace1: %ld\tTrace2: %ld\n", traceNumber1, traceNumber2);
-	//freopen(NULL, "wb", stdout);
-	//fwrite(*traces_data_pp, 1, 16, stdout);			
-	//fwrite(*traces_SU_pp, 1, 16, stdout);
-	for (i = 0; i < traceNumber2; i++)
-        {
-		MPI_Send( &((*traces_data_pp)[traceNumber1+i]), TH, MPI_CHAR, 1, 0, MPI_COMM_WORLD);			
-		MPI_Send( (*traces_data_pp)[traceNumber1+i].data, QTFloat, MPI_FLOAT, 1, 0, MPI_COMM_WORLD);
+        	while(numberShot == curNumShot && traceNumber != TQtt)
+		{
+	   		getSegyTrace(&((*traces_data_pp)[traceNumber]), traceNumber, traces_SU_p);
+			if((*traces_data_pp)[traceNumber].sx != curSx || (*traces_data_pp)[traceNumber].sy != curSy)
+			{
+				curNumShot++;
+				curSx = (*traces_data_pp)[traceNumber].sx;
+        	   		curSy = (*traces_data_pp)[traceNumber].sy;
+			}
+			traceNumber++;
+	        }
+		numberShot++;
+		curTraceNumber = traceNumber - prevTraceNumber - 1;
+	  	if(traceNumber == TQtt)
+		{
+			curTraceNumber++;
+		}	
+       		dest = curNumShot % comm_sz;
+		//Send Traces
+		if(dest != 0)
+		{
+	        	MPI_Send(&curTraceNumber, 1, MPI_LONG, dest, 0, MPI_COMM_WORLD);
+			for (i = 0; i < curTraceNumber; i++)
+        		{
+				MPI_Send( &((*traces_data_pp)[prevTraceNumber+i]), TH, MPI_CHAR, dest, 0, MPI_COMM_WORLD);			
+				MPI_Send( (*traces_data_pp)[prevTraceNumber+i].data, QTFloat, MPI_FLOAT, dest, 0, MPI_COMM_WORLD);
+			}	
+		}
+		else
+		{
+			traceNumberTotal += curTraceNumber;
+		}
+		printf("Destination: %d\tNumberShot: %d\tCurTraceNumber: %ld\tTraceNumber: %ld\n", dest, numberShot, curTraceNumber, traceNumber);
+		prevTraceNumber = traceNumber;
 	}
-	
-	//MPI_Send(*traces_data_pp, traceNumber1*(TH+TD), MPI_CHAR, 1, 0, MPI_COMM_WORLD);	   
-	//MPI_Send(&((*traces_data_pp)[traceNumber1]), traceNumber2, segytrace_t, 1, 0, MPI_COMM_WORLD);
-	traceNumberLocal = traceNumber1;        
-	
-   }	
 
-   
-   if(my_rank == 1)
+	printf("%d Enviará flag de termino\n", my_rank);
+
+	for (i = 1; i < comm_sz; i++)
+        {
+		MPI_Send(&traceNumber, 1, MPI_LONG, i, 0, MPI_COMM_WORLD);
+	}
+        
+        printf("%d Mandou terminar\n", my_rank);
+   }	
+   else
    {
-	
 	//Receive Traces
    	MPI_Status status;
-	long traceNumber2;
-	int i;
-	MPI_Recv(&traceNumber2, 1, MPI_LONG, 0, 0, MPI_COMM_WORLD, &status);
-	*traces_data_pp = (SegyTrace*) malloc(traceNumber2*sizeof(SegyTrace));
-        for (i = 0; i < traceNumber2; i++)
+	long traceNumberLocal;
+	long i;
+
+	*traces_data_pp = (SegyTrace*) malloc((TQtt/comm_sz)*2*sizeof(SegyTrace));
+	for (i = 0; i < (TQtt/comm_sz)*2; i++)
         {
         	(*traces_data_pp)[i].data = (float *) malloc(TD);
         }
-	for (i = 0; i < traceNumber2; i++)
-        {
-		MPI_Recv( &((*traces_data_pp)[i]), TH, MPI_CHAR, 0, 0, MPI_COMM_WORLD, &status);
-		MPI_Recv((*traces_data_pp)[i].data, QTFloat, MPI_FLOAT, 0, 0, MPI_COMM_WORLD, &status);
-	}
-        //MPI_Recv(*traces_data_pp, traceNumber2*(TH+TD), MPI_CHAR, 0, 0, MPI_COMM_WORLD, &status);
-	//MPI_Recv(*traces_data_pp, traceNumber2, segytrace_t, 0, 0, MPI_COMM_WORLD, &status);
-  	traceNumberLocal = traceNumber2;
-	
-    }
-   
 
+	while(1)
+	{
+		MPI_Recv(&traceNumberLocal, 1, MPI_LONG, 0, 0, MPI_COMM_WORLD, &status);
+
+		if(traceNumberLocal == TQtt)
+		{
+			 printf("%d Terminou Distribuicao Local\n", my_rank);
+			 break;
+		}
+
+		if(traceNumberTotal >= TQtt/2 - 10000)
+                {
+                         printf("MyRank: %d\t traceLocal: %ld\t traceTotal: %ld\n", my_rank, traceNumberLocal, traceNumberTotal);
+                }
+
+		for (i = 0; i < traceNumberLocal; i++)
+        	{
+			MPI_Recv( &((*traces_data_pp)[traceNumberTotal+i]), TH, MPI_CHAR, 0, 0, MPI_COMM_WORLD, &status);
+			MPI_Recv((*traces_data_pp)[traceNumberTotal+i].data, QTFloat, MPI_FLOAT, 0, 0, MPI_COMM_WORLD, &status);
+		}
+	  	traceNumberTotal += traceNumberLocal;
+	}
+
+        printf("%d Terminou Distribuicao Local\n", my_rank);	
+
+    } 
+
+   printf("%d Terminou Distribuicao\n", my_rank);
    //Broadcast Velocity Model
-   MPI_Bcast(&size, 1, MPI_LONG, 0, comm);	 
-   *velocity_model_data_pp = (uint8_t*) malloc(size*sizeof(uint8_t));
-   if (*velocity_model_data_pp == NULL) {fputs ("Memory error",stderr); exit (2);}
-    
    if(my_rank == 0)
    {
-          size_t result; 
-	  result = fread(*velocity_model_data_pp, 1, size, *velocity_model_file_pp);
-          if (result != size) {fputs ("Reading error",stderr); exit (3);}
+	   FILE *velocity_model_file_p = fopen(argv[2], "rb");
+           if (velocity_model_file_p == NULL)
+           {
+                fprintf(stderr, "Erro ao abrir arquivo %s\n", argv[2]);
+                exit(0);
+           }
+
+           fseek(velocity_model_file_p, 0, SEEK_END);
+           size = ftell(velocity_model_file_p);
+           fseek(velocity_model_file_p, 0, SEEK_SET);
+
+           printf("%d Abriu arquivo\n", my_rank);
+   
+   	   *velocity_model_data_pp = (uint8_t*) malloc(size*sizeof(uint8_t));
+   	   if (*velocity_model_data_pp == NULL) {fputs ("Memory error",stderr); exit (2);}
+
+	   printf("%d Alocou vetor\n", my_rank);
+
+	   size_t result;
+           result = fread(*velocity_model_data_pp, 1, size, velocity_model_file_p);
+           if (result != size) {fputs ("Reading error",stderr); exit (3);}
+	   
+           printf("%d Leu arquivo\n", my_rank);
+
+	   fclose(velocity_model_file_p);
+
+	   printf("%d Fechou arquivo\n", my_rank);
    }
    
+   printf("Myrank: %d Chegou antes do broadcast!\n", my_rank);
+   MPI_Bcast(&size, 1, MPI_LONG, 0, comm);	   
+
+   if(my_rank != 0)
+   {
+           *velocity_model_data_pp = (uint8_t*) malloc(size*sizeof(uint8_t));
+           if (*velocity_model_data_pp == NULL) {fputs ("Memory error",stderr); exit (2);}
+
+           printf("%d Alocou vetor\n", my_rank);
+   }
+
    MPI_Bcast(*velocity_model_data_pp, size, MPI_CHAR, 0, comm);	
 
-   
+   printf("My_rank: %d\tBroadcast do modelo de velocidades feito\n", my_rank);   
+
+
    //Output Su Files
-   char suFileName [20];
-   sprintf(suFileName, "output_%d.su", my_rank);
+   char fileName [20];
+   sprintf(fileName, "output_%d.su", my_rank);
 
    FILE *outputSu_file;
-   outputSu_file = fopen(suFileName, "wb");
+   outputSu_file = fopen(fileName, "wb");
    if (outputSu_file == NULL)
    {
         fprintf(stderr, "Erro ao abrir arquivo outputSU\n");
   	exit(0);
    }
    int i;
-   for(i = 0; i < traceNumberLocal; i++)
+   for(i = 0; i < traceNumberTotal; i++)
    {
 	fwrite(&((*traces_data_pp)[i]), 1, TH, outputSu_file);
 	fflush(outputSu_file);
@@ -422,31 +410,25 @@ void Get_args(
    }
    fclose(outputSu_file);
 
-  
-   //Output different files
-   //Test
-   if(my_rank == 1)
+   printf("My_rank: %d\tArquivo .su exportado\n", my_rank);
+
+   //Output Velocity Model files
+   FILE *output_file;
+   sprintf(fileName, "vModel_%d.ad", my_rank);
+   output_file = fopen(fileName, "wb");
+   if (output_file == NULL)
    {
-       	FILE *output_file;
-   	output_file = fopen("outputVel", "wb");
-   	if (output_file == NULL)
-	{
-	   	fprintf(stderr, "Erro ao abrir arquivo output\n");
-		exit(0);
-   	}  
-        fwrite(*velocity_model_data_pp, 1, size, output_file);
-   	fflush(output_file);
-   	fclose(output_file);
-   }
-  
-   if(my_rank == 0)
-   {
-	//MPI_Type_free(&segytrace_t);
-   	fclose(*traces_SU_pp);
-   	fclose(*velocity_model_file_pp);
-   }
+   	fprintf(stderr, "Erro ao abrir arquivo output\n");
+	exit(0);
+   }  
+   fwrite(*velocity_model_data_pp, 1, size, output_file);
+   fflush(output_file);
+   fclose(output_file);
    
-}  /* Get_args */
+  
+   printf("My_rank: %d\tArquivo de modelo de velocidades exportado\n", my_rank);
+ 
+} 
 
 
 
