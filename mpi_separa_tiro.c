@@ -214,7 +214,7 @@ void Get_data(
 
    long size, traceNumberTotal= 0;
    //MPI_Datatype segytrace_t;
-   //FILE *velocity_model_file_p;
+   FILE *velocity_model_file_p;
    if(my_rank == 0)
    {
            //Open files 
@@ -251,7 +251,6 @@ void Get_data(
 			printf("\nDistribuição dos traços concluída com sucesso!\n\n");
 			//MPI_Type_free(&segytrace_t);
 		        fclose(traces_SU_p);
-			printf("%d Fechei o arquivo\n", my_rank);
 			break;
 		}
 
@@ -291,14 +290,11 @@ void Get_data(
 		prevTraceNumber = traceNumber;
 	}
 
-	printf("%d Enviará flag de termino\n", my_rank);
-
 	for (i = 1; i < comm_sz; i++)
         {
 		MPI_Send(&traceNumber, 1, MPI_LONG, i, 0, MPI_COMM_WORLD);
 	}
         
-        printf("%d Mandou terminar\n", my_rank);
    }	
    else
    {
@@ -319,14 +315,8 @@ void Get_data(
 
 		if(traceNumberLocal == TQtt)
 		{
-			 printf("%d Terminou Distribuicao Local\n", my_rank);
 			 break;
 		}
-
-		if(traceNumberTotal >= TQtt/2 - 10000)
-                {
-                         printf("MyRank: %d\t traceLocal: %ld\t traceTotal: %ld\n", my_rank, traceNumberLocal, traceNumberTotal);
-                }
 
 		for (i = 0; i < traceNumberLocal; i++)
         	{
@@ -335,16 +325,12 @@ void Get_data(
 		}
 	  	traceNumberTotal += traceNumberLocal;
 	}
-
-        printf("%d Terminou Distribuicao Local\n", my_rank);	
-
     } 
 
-   printf("%d Terminou Distribuicao\n", my_rank);
    //Broadcast Velocity Model
    if(my_rank == 0)
    {
-	   FILE *velocity_model_file_p = fopen(argv[2], "rb");
+	   velocity_model_file_p = fopen(argv[2], "rb");
            if (velocity_model_file_p == NULL)
            {
                 fprintf(stderr, "Erro ao abrir arquivo %s\n", argv[2]);
@@ -354,34 +340,21 @@ void Get_data(
            fseek(velocity_model_file_p, 0, SEEK_END);
            size = ftell(velocity_model_file_p);
            fseek(velocity_model_file_p, 0, SEEK_SET);
-
-           printf("%d Abriu arquivo\n", my_rank);
+   }
    
-   	   *velocity_model_data_pp = (uint8_t*) malloc(size*sizeof(uint8_t));
-   	   if (*velocity_model_data_pp == NULL) {fputs ("Memory error",stderr); exit (2);}
+   MPI_Bcast(&size, 1, MPI_LONG, 0, comm);
 
-	   printf("%d Alocou vetor\n", my_rank);
+   *velocity_model_data_pp = (uint8_t*) malloc(size*sizeof(uint8_t));
+   if (*velocity_model_data_pp == NULL) {fputs ("Memory error",stderr); exit (2);}
 
+   if(my_rank == 0)
+   {
 	   size_t result;
            result = fread(*velocity_model_data_pp, 1, size, velocity_model_file_p);
            if (result != size) {fputs ("Reading error",stderr); exit (3);}
-	   
-           printf("%d Leu arquivo\n", my_rank);
 
 	   fclose(velocity_model_file_p);
 
-	   printf("%d Fechou arquivo\n", my_rank);
-   }
-   
-   printf("Myrank: %d Chegou antes do broadcast!\n", my_rank);
-   MPI_Bcast(&size, 1, MPI_LONG, 0, comm);	   
-
-   if(my_rank != 0)
-   {
-           *velocity_model_data_pp = (uint8_t*) malloc(size*sizeof(uint8_t));
-           if (*velocity_model_data_pp == NULL) {fputs ("Memory error",stderr); exit (2);}
-
-           printf("%d Alocou vetor\n", my_rank);
    }
 
    MPI_Bcast(*velocity_model_data_pp, size, MPI_CHAR, 0, comm);	
