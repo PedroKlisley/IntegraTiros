@@ -5,10 +5,12 @@
 #include <mpi.h>
 
 
-#define TH 	240 	// Trace Header bytes
-#define TD 	2500 	// Trace Data bytes
-#define QTFloat 625	// Trace Data Floats
-#define TQtt	2286908	// Trace Quantity
+#define TH 		240 	// Trace Header bytes
+#define TD 		2500 	// Trace Data bytes
+#define QTFloat 	625	// Trace Data Floats
+#define TQtt		2286908	// Trace Quantity
+#define shotLimit	2
+
 
 typedef struct { // 240-byte Trace Header + Data
   int tracl; // trace sequence number within line
@@ -246,7 +248,7 @@ void Get_data(
 	   short curNumShot = 0, dest;
 	   while(1)
 	   {
-		if(traceNumber == TQtt)
+		if(traceNumber == TQtt || numberShot == shotLimit)
 		{
 			printf("\nDistribuição dos traços concluída com sucesso!\n\n");
 			//MPI_Type_free(&segytrace_t);
@@ -290,6 +292,7 @@ void Get_data(
 		prevTraceNumber = traceNumber;
 	}
 
+	traceNumber = TQtt;
 	for (i = 1; i < comm_sz; i++)
         {
 		MPI_Send(&traceNumber, 1, MPI_LONG, i, 0, MPI_COMM_WORLD);
