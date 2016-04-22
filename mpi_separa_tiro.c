@@ -4,13 +4,16 @@
 #include <string.h>
 #include <mpi.h>
 
+//Remover breaks
+//Melhorar alocação de vetores
+
 
 #define TH 		240 	// Trace Header bytes
 #define TD 		2500 	// Trace Data bytes
 #define QTFloat 	625	// Trace Data Floats
 #define TQtt		2286908	// Trace Quantity
-#define shotLimit	2
-
+#define shotLimit	4
+#define nTMax		544	// Number Trace Maximum
 
 typedef struct { // 240-byte Trace Header + Data
   int tracl; // trace sequence number within line
@@ -214,7 +217,7 @@ void Get_data(
       int		comm_sz			/* in  */,
       MPI_Comm 		comm		       	/* in  */) {
 
-   long size, traceNumberTotal= 0;
+   unsigned long int size, traceNumberLocalSum = 0;
    //MPI_Datatype segytrace_t;
    FILE *velocity_model_file_p;
    if(my_rank == 0)
@@ -229,23 +232,21 @@ void Get_data(
 	  
 	   //Get Traces
 	   int i;
-	   *traces_data_pp = (SegyTrace*) malloc(TQtt*sizeof(SegyTrace));
-	   for (i = 0; i < TQtt; i++) 
+	   *traces_data_pp = (SegyTrace*) malloc(nTMax*sizeof(SegyTrace));
+	   for (i = 0; i < nTMax; i++) 
 	   {
    		 (*traces_data_pp)[i].data = (float *) malloc(TD);
 	   }	
-	   int curSx = 0, curSy = 0;
-	   long traceNumber = 0, curTraceNumber = 0, prevTraceNumber = 0;
-           int numberShot = 0;
+	   int curSx = 0.0, curSy = 0.0;
+	   unsigned long int traceNumber = 0, curTraceNumber = 0, prevTraceNumber = 0;
+           unsigned int numberShot = 0, curNumShot = 0, dest;
            
 
            getSegyTrace(*traces_data_pp, traceNumber, traces_SU_p);
            curSx = (*traces_data_pp)[traceNumber].sx;
 	   curSy = (*traces_data_pp)[traceNumber].sy;
 	   traceNumber++;
-	
 
-	   short curNumShot = 0, dest;
 	   while(1)
 	   {
 		if(traceNumber == TQtt || numberShot == shotLimit)
@@ -256,6 +257,7 @@ void Get_data(
 			break;
 		}
 
+		curTraceNumber = 0;
         	while(numberShot == curNumShot && traceNumber != TQtt)
 		{
 	   		getSegyTrace(&((*traces_data_pp)[traceNumber]), traceNumber, traces_SU_p);
@@ -265,14 +267,16 @@ void Get_data(
 				curSx = (*traces_data_pp)[traceNumber].sx;
         	   		curSy = (*traces_data_pp)[traceNumber].sy;
 			}
+			
 			traceNumber++;
 	        }
 		numberShot++;
 		curTraceNumber = traceNumber - prevTraceNumber - 1;
-	  	if(traceNumber == TQtt)
+                if(traceNumber == TQtt)
 		{
 			curTraceNumber++;
 		}	
+                
        		dest = curNumShot % comm_sz;
 		//Send Traces
 		if(dest != 0)
@@ -282,14 +286,15 @@ void Get_data(
         		{
 				MPI_Send( &((*traces_data_pp)[prevTraceNumber+i]), TH, MPI_CHAR, dest, 0, MPI_COMM_WORLD);			
 				MPI_Send( (*traces_data_pp)[prevTraceNumber+i].data, QTFloat, MPI_FLOAT, dest, 0, MPI_COMM_WORLD);
+				//printf("%d enviou traço %lu\n", my_rank, prevTraceNumber+i);
 			}	
 		}
 		else
 		{
-			traceNumberTotal += curTraceNumber;
+			traceNumberLocalSum += curTraceNumber;
 		}
-		printf("Destination: %d\tNumberShot: %d\tCurTraceNumber: %ld\tTraceNumber: %ld\n", dest, numberShot, curTraceNumber, traceNumber);
-		prevTraceNumber = traceNumber;
+		printf("Destination: %u\tNumberShot: %u\tCurTraceNumber: %lu\tTraceNumber: %lu\t PrevTN: %lu\n", dest, numberShot, curTraceNumber, traceNumber, prevTraceNumber);
+		prevTraceNumber = traceNumber - 1;
 	}
 
 	traceNumber = TQtt;
@@ -323,10 +328,11 @@ void Get_data(
 
 		for (i = 0; i < traceNumberLocal; i++)
         	{
-			MPI_Recv( &((*traces_data_pp)[traceNumberTotal+i]), TH, MPI_CHAR, 0, 0, MPI_COMM_WORLD, &status);
-			MPI_Recv((*traces_data_pp)[traceNumberTotal+i].data, QTFloat, MPI_FLOAT, 0, 0, MPI_COMM_WORLD, &status);
+			MPI_Recv( &((*traces_data_pp)[traceNumberLocalSum+i]), TH, MPI_CHAR, 0, 0, MPI_COMM_WORLD, &status);
+			MPI_Recv((*traces_data_pp)[traceNumberLocalSum+i].data, QTFloat, MPI_FLOAT, 0, 0, MPI_COMM_WORLD, &status);
+			//printf("%d recebeu traço %lu\n", my_rank, traceNumberLocalSum+i);
 		}
-	  	traceNumberTotal += traceNumberLocal;
+	  	traceNumberLocalSum += traceNumberLocal;
 	}
     } 
 
@@ -377,7 +383,7 @@ void Get_data(
   	exit(0);
    }
    int i;
-   for(i = 0; i < traceNumberTotal; i++)
+   for(i = 0; i < traceNumberLocalSum; i++)
    {
 	fwrite(&((*traces_data_pp)[i]), 1, TH, outputSu_file);
 	fflush(outputSu_file);
