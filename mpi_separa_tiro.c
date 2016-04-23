@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <mpi.h>
+#include <limits.h>
 
 //Remover breaks
 //Melhorar alocação de vetores
@@ -10,9 +11,9 @@
 
 #define TH 		240 	// Trace Header bytes
 #define TD 		2500 	// Trace Data bytes
-#define QTFloat 	625	// Trace Data Floats
+#define nsMax	 	625	// Trace Data Floats
 #define TQtt		2286908	// Trace Quantity
-#define shotLimit	4
+#define shotLimit	2
 #define nTMax		544	// Number Trace Maximum
 
 typedef struct { // 240-byte Trace Header + Data
@@ -106,20 +107,20 @@ typedef struct { // 240-byte Trace Header + Data
   short smu; // Source Measurement Unit
   short unass[4]; // Unassigned
   float * data; // Data
-} SegyTrace;
+} SuTrace;
 
 
 
 void Usage(char* errorMessage, int rank);
 void Check_for_error(int local_ok, char fname[], char message[],
       MPI_Comm comm);
-void Get_data(char* argv[], SegyTrace** traces_data_pp, uint8_t** velocity_model_data_pp, int my_rank, int comm_sz, MPI_Comm comm);
+void Get_data(char* argv[], SuTrace** traces_data_pp, uint8_t** velocity_model_data_pp, int my_rank, int comm_sz, MPI_Comm comm);
 
 
 
 int main(int argc, char* argv[]) {
    int comm_sz, my_rank;
-   SegyTrace* traces_data;
+   SuTrace* traces_data;
    uint8_t *velocity_model_data;
    MPI_Comm comm;
 
@@ -174,25 +175,40 @@ void Usage(char prog_name[], int my_rank) {
    exit(0);
 } 
 
-void getSegyTrace(SegyTrace* st, long tn, FILE *fsegy) { // Lê tn-ésimo traço (com Zi amostras) 0 <= tn < Ntr
-  fseek(fsegy, tn*(TH+TD), SEEK_SET);
+void getNextSxSy(FILE *suFile, int *nextSx, int *nextSy)
+{
+  fseek(suFile, 72, SEEK_CUR);
+   
+  if (fread(nextSx, 1, sizeof(int), suFile) != sizeof(int)) {
+    printf("getSuTrace failed!\n");
+    return;
+  }
+  
+  if (fread(nextSy, 1, sizeof(int), suFile) != sizeof(int)) {
+    printf("getSuTrace failed!\n");
+    return;
+  }
+   
+  fseek(suFile, -80, SEEK_CUR);
+}
 
-    
-  if (fread(st, 1, TH, fsegy) != TH) {
-    printf("getSegyTrace %li failed!\n", tn);
+void getSuTrace(FILE *suFile, SuTrace* trace, int curTraceIndex)
+{
+
+  if (fread(&(trace[curTraceIndex]), 1, TH, suFile) != TH) {
+    printf("getSuTrace failed!\n");
     return;
   }
-  
-  if (fread(st->data, 1, TD, fsegy) != TD) {
-    printf("getSegyTrace %li failed!\n", tn);
+
+  if (fread(trace[curTraceIndex].data, 1, sizeof(float)*nsMax, suFile) != sizeof(float)*nsMax) {
+    printf("getSuTrace failed!\n");
     return;
   }
-  
+
 }
 
 
-
-void Build_mpi_type(SegyTrace* st, MPI_Datatype*  input_mpi_t_p  	/* out */) {
+void Build_mpi_type(SuTrace* st, MPI_Datatype*  input_mpi_t_p  	/* out */) {
 
    int array_of_blocklengths[2] = {TH, 625};
    MPI_Datatype array_of_types[2] = {MPI_CHAR, MPI_FLOAT};
@@ -211,7 +227,7 @@ void Build_mpi_type(SegyTrace* st, MPI_Datatype*  input_mpi_t_p  	/* out */) {
 
 void Get_data(
       char*    		argv[]        		/* in  */,
-      SegyTrace**       traces_data_pp		/* out */,
+      SuTrace**         traces_data_pp		/* out */,
       uint8_t** 	velocity_model_data_pp  /* out */,
       int 		my_rank			/* in  */,
       int		comm_sz			/* in  */,
@@ -232,72 +248,84 @@ void Get_data(
 	  
 	   //Get Traces
 	   int i;
-	   *traces_data_pp = (SegyTrace*) malloc(nTMax*sizeof(SegyTrace));
+	   *traces_data_pp = (SuTrace*) malloc(nTMax*sizeof(SuTrace));
+
 	   for (i = 0; i < nTMax; i++) 
 	   {
    		 (*traces_data_pp)[i].data = (float *) malloc(TD);
 	   }	
-	   int curSx = 0.0, curSy = 0.0;
-	   unsigned long int traceNumber = 0, curTraceNumber = 0, prevTraceNumber = 0;
-           unsigned int numberShot = 0, curNumShot = 0, dest;
-           
 
-           getSegyTrace(*traces_data_pp, traceNumber, traces_SU_p);
-           curSx = (*traces_data_pp)[traceNumber].sx;
+	   int curSx = 0, curSy = 0;
+	   unsigned long int traceNumber = 0, curTraceNumber = 0, prevTraceNumber = 0, prev2 = 0;
+           unsigned int numberShot = 0, dest;
+           
+           //getSegyTrace(*traces_data_pp, traceNumber, traces_SU_p);
+	   getNextSxSy(traces_SU_p, &curSx, &curSy);
+	   (*traces_data_pp)[0].sx = curSx;
+           (*traces_data_pp)[0].sy = curSy;
+           /*
+	   curSx = (*traces_data_pp)[traceNumber].sx;
 	   curSy = (*traces_data_pp)[traceNumber].sy;
 	   traceNumber++;
+           */
 
-	   while(1)
+	   while(traceNumber < TQtt && numberShot < shotLimit)
 	   {
-		if(traceNumber == TQtt || numberShot == shotLimit)
-		{
-			printf("\nDistribuição dos traços concluída com sucesso!\n\n");
-			//MPI_Type_free(&segytrace_t);
-		        fclose(traces_SU_p);
-			break;
-		}
-
 		curTraceNumber = 0;
-        	while(numberShot == curNumShot && traceNumber != TQtt)
-		{
-	   		getSegyTrace(&((*traces_data_pp)[traceNumber]), traceNumber, traces_SU_p);
-			if((*traces_data_pp)[traceNumber].sx != curSx || (*traces_data_pp)[traceNumber].sy != curSy)
-			{
-				curNumShot++;
-				curSx = (*traces_data_pp)[traceNumber].sx;
-        	   		curSy = (*traces_data_pp)[traceNumber].sy;
-			}
-			
+		prev2 = curTraceNumber;
+		getNextSxSy(traces_SU_p, &curSx, &curSy);
+           	(*traces_data_pp)[0].sx = curSx;
+           	(*traces_data_pp)[0].sy = curSy;
+
+        	while((*traces_data_pp)[prev2].sx == curSx && (*traces_data_pp)[prev2].sy == curSy && traceNumber < TQtt)
+		{	
+			getSuTrace(traces_SU_p, *traces_data_pp, curTraceNumber);
+			getNextSxSy(traces_SU_p, &curSx, &curSy);
 			traceNumber++;
+			prev2 = curTraceNumber;
+			curTraceNumber++;
 	        }
+
 		numberShot++;
-		curTraceNumber = traceNumber - prevTraceNumber - 1;
+	
+		/*	
                 if(traceNumber == TQtt)
 		{
-			curTraceNumber++;
+			curTraceNumber = traceNumber - prevTraceNumber;
 		}	
-                
-       		dest = curNumShot % comm_sz;
+                else
+		{
+			curTraceNumber = traceNumber - prevTraceNumber - 1;
+		}
+		*/
+
+       		dest = numberShot % comm_sz;
+
 		//Send Traces
 		if(dest != 0)
 		{
 	        	MPI_Send(&curTraceNumber, 1, MPI_LONG, dest, 0, MPI_COMM_WORLD);
 			for (i = 0; i < curTraceNumber; i++)
         		{
-				MPI_Send( &((*traces_data_pp)[prevTraceNumber+i]), TH, MPI_CHAR, dest, 0, MPI_COMM_WORLD);			
-				MPI_Send( (*traces_data_pp)[prevTraceNumber+i].data, QTFloat, MPI_FLOAT, dest, 0, MPI_COMM_WORLD);
-				//printf("%d enviou traço %lu\n", my_rank, prevTraceNumber+i);
+				MPI_Send( &((*traces_data_pp)[i]), TH, MPI_CHAR, dest, 0, MPI_COMM_WORLD);			
+				MPI_Send( (*traces_data_pp)[i].data, nsMax, MPI_FLOAT, dest, 0, MPI_COMM_WORLD);
+				printf("%d enviou traço %lu\n", my_rank, prevTraceNumber+i);
 			}	
 		}
 		else
 		{
 			traceNumberLocalSum += curTraceNumber;
 		}
+
 		printf("Destination: %u\tNumberShot: %u\tCurTraceNumber: %lu\tTraceNumber: %lu\t PrevTN: %lu\n", dest, numberShot, curTraceNumber, traceNumber, prevTraceNumber);
-		prevTraceNumber = traceNumber - 1;
+		prevTraceNumber = traceNumber;
 	}
 
+	printf("\nDistribuição dos traços concluída com sucesso!\n\n");
+        //MPI_Type_free(&segytrace_t);
+	fclose(traces_SU_p);
 	traceNumber = TQtt;
+
 	for (i = 1; i < comm_sz; i++)
         {
 		MPI_Send(&traceNumber, 1, MPI_LONG, i, 0, MPI_COMM_WORLD);
@@ -308,31 +336,29 @@ void Get_data(
    {
 	//Receive Traces
    	MPI_Status status;
-	long traceNumberLocal;
+	long traceNumberLocal = 0;
 	long i;
 
-	*traces_data_pp = (SegyTrace*) malloc((TQtt/comm_sz)*2*sizeof(SegyTrace));
-	for (i = 0; i < (TQtt/comm_sz)*2; i++)
+	*traces_data_pp = (SuTrace*) malloc(nTMax*sizeof(SuTrace));
+
+	for (i = 0; i < nTMax; i++)
         {
         	(*traces_data_pp)[i].data = (float *) malloc(TD);
         }
 
-	while(1)
+	MPI_Recv(&traceNumberLocal, 1, MPI_LONG, 0, 0, MPI_COMM_WORLD, &status);
+
+	while(traceNumberLocal != TQtt)
 	{
-		MPI_Recv(&traceNumberLocal, 1, MPI_LONG, 0, 0, MPI_COMM_WORLD, &status);
-
-		if(traceNumberLocal == TQtt)
-		{
-			 break;
-		}
-
 		for (i = 0; i < traceNumberLocal; i++)
         	{
 			MPI_Recv( &((*traces_data_pp)[traceNumberLocalSum+i]), TH, MPI_CHAR, 0, 0, MPI_COMM_WORLD, &status);
-			MPI_Recv((*traces_data_pp)[traceNumberLocalSum+i].data, QTFloat, MPI_FLOAT, 0, 0, MPI_COMM_WORLD, &status);
-			//printf("%d recebeu traço %lu\n", my_rank, traceNumberLocalSum+i);
+			MPI_Recv((*traces_data_pp)[traceNumberLocalSum+i].data, nsMax, MPI_FLOAT, 0, 0, MPI_COMM_WORLD, &status);
+			printf("%d recebeu traço %lu\n", my_rank, traceNumberLocalSum+i);
 		}
+
 	  	traceNumberLocalSum += traceNumberLocal;
+		MPI_Recv(&traceNumberLocal, 1, MPI_LONG, 0, 0, MPI_COMM_WORLD, &status);
 	}
     } 
 
