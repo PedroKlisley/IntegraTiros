@@ -5,16 +5,13 @@
 #include <mpi.h>
 #include <limits.h>
 
-//Remover breaks
-//Melhorar alocação de vetores
+//Tiro 1 - 0 enviou traço 111	SxReal: 336527360	SyReal: -66912256 	Sx: 336527360 	Sy: -66912256
+//Tiro 2 - 0 enviou traço 127	SxReal: 336527360	SyReal: 1275330560	Sx: 336527360	Sy: 1275330560
 
+//Melhorar variáveis e prints
+//Organizar e comentar código
 
 #define TH 		240 	// Trace Header bytes
-//#define TD 		2500 	// Trace Data bytes
-//#define nsMax	 	625	// Trace Data Floats
-//#define TQtt		2286908	// Trace Quantity
-//#define shotLimit	2
-//#define nTMax		544	// Number Trace Maximum
 
 typedef struct { // 240-byte Trace Header + Data
   int tracl; // trace sequence number within line
@@ -110,51 +107,57 @@ typedef struct { // 240-byte Trace Header + Data
 } SuTrace;
 
 
-
+//Function declarations
 void usage(char* errorMessage, int rank);
 void checkError(int local_ok, char fname[], char message[], MPI_Comm comm);
-void getData(char* argv[], SuTrace** traces_data_pp, unsigned long* localTraceNumber, unsigned int* sx_p, unsigned int* sy_p, uint8_t** velocity_model_data_pp, int my_rank, int comm_sz, MPI_Comm comm);
 void getInput(char* argv[], unsigned int* nSQtt, unsigned long* nTMax, unsigned int* shotLimit, unsigned long int* nTQtt, unsigned int* TD, int my_rank, int comm_sz, MPI_Comm comm);
+void getData(char* argv[], SuTrace** traces_data_pp, unsigned long* localTraceNumber, unsigned int* sx_p, unsigned int* sy_p, uint8_t** velocity_model_data_pp, unsigned long* vModelSize, int my_rank, int comm_sz, MPI_Comm comm);
+void printFile(SuTrace* traces, unsigned long localTraceNumber, uint8_t* velocity_model_data, unsigned long vModelSize, int my_rank);
 
-/*
-void getArgs(char* argv[], char** suFName, char** vModelFName, unsigned int* nsMax, unsigned long int* tQtt, unsigned int* shotLimit, 			     unsigned int* nTmax)
-{
-  	sprintf(*suFName, argv[1]);
-	sprintf(*vModelFName, argv[2]);
-	
-}
-*/
-
+//Global variables declaration
 unsigned int nSQtt;
 unsigned long nTMax; 
 unsigned int shotLimit; 
 unsigned long int nTQtt;
 unsigned int TD;
 
+
 int main(int argc, char* argv[]) {
+
+   //Variable declarations
    int comm_sz, my_rank;
-   SuTrace* traces_data;
+   SuTrace* traces;
    uint8_t *velocity_model_data;
-   unsigned long localTraceNumber;
+   unsigned long localTraceNumber, vModelSize;
    unsigned int sx, sy;
    MPI_Comm comm;
 
+   //MPI start
    MPI_Init(&argc, &argv);
    comm = MPI_COMM_WORLD;
    MPI_Comm_size(comm, &comm_sz);
    MPI_Comm_rank(comm, &my_rank);
 
-   /* Check and get command line args */
+   // Check command line arguments
    if (argc != 4) 
    {
 	usage(argv[0], my_rank); 
    }
  
    getInput(argv, &nSQtt, &nTMax, &shotLimit, &nTQtt, &TD, my_rank, comm_sz, comm);
-   getData(argv, &traces_data, &localTraceNumber, &sx, &sy, &velocity_model_data, my_rank, comm_sz, comm);
+   getData(argv, &traces, &localTraceNumber, &sx, &sy, &velocity_model_data, &vModelSize, my_rank, comm_sz, comm);
+   printFile(traces, localTraceNumber, velocity_model_data, vModelSize, my_rank);
 
-   free(traces_data);
-   free(velocity_model_data);
+   if(localTraceNumber > 0)
+   {
+	printf("Thread: %d\t ficou com %lu traços\tSxReal: %d\tSyReal: %d\t Sx: %d\t Sy: %d\n", my_rank, localTraceNumber, traces[0].sx, traces[localTraceNumber-1].sy, sx, sy);
+   	free(traces);
+   }
+   
+   if(vModelSize > 0)
+   {
+   	free(velocity_model_data);
+   }
 
    MPI_Finalize();
 
@@ -162,12 +165,12 @@ int main(int argc, char* argv[]) {
 } 
 
 
-
+/*
 void Check_for_error(
-      int       local_ok   /* in */, 
-      char      fname[]    /* in */,
-      char      message[]  /* in */, 
-      MPI_Comm  comm       /* in */) {
+      int       local_ok, 
+      char      fname[],
+      char      message[], 
+      MPI_Comm  comm) {
    int ok;
 
    MPI_Allreduce(&local_ok, &ok, 1, MPI_INT, MPI_MIN, comm);
@@ -182,7 +185,7 @@ void Check_for_error(
       MPI_Finalize();
       exit(-1);
    }
-}  /* Check_for_error */
+} */ /* Check_for_error */
 
 
 void usage(char prog_name[], int my_rank) {
@@ -199,8 +202,6 @@ void usage(char prog_name[], int my_rank) {
 
 void getInput(char* argv[], unsigned int* nSQtt, unsigned long* nTMax, unsigned int* shotLimit, unsigned long int* nTQtt, unsigned int* TD, int my_rank, int comm_sz, MPI_Comm comm)
 {
-        //int defInput = atoi(argv[3]);
-
         if(my_rank == 0)
         {
                 int defInput = atoi(argv[3]);
@@ -219,17 +220,18 @@ void getInput(char* argv[], unsigned int* nSQtt, unsigned long* nTMax, unsigned 
                 {
                         *nSQtt = 625;
                         *nTMax = 544;
-                        *shotLimit = 2;
+                        *shotLimit = comm_sz-1;
                         *nTQtt = 2286908;
                 }
          
                 *TD = *nSQtt * sizeof(float);
         }
 
-        MPI_Bcast(&nSQtt, 1, MPI_INT, 0, comm);
-        MPI_Bcast(&nTMax, 1, MPI_INT, 0, comm);
-        MPI_Bcast(&shotLimit, 1, MPI_INT, 0, comm);
-        MPI_Bcast(&nTQtt, 1, MPI_LONG, 0, comm);
+        MPI_Bcast(nSQtt, 1, MPI_INT, 0, comm);
+        MPI_Bcast(nTMax, 1, MPI_LONG, 0, comm);
+        MPI_Bcast(shotLimit, 1, MPI_INT, 0, comm);
+        MPI_Bcast(nTQtt, 1, MPI_LONG, 0, comm);
+	MPI_Bcast(TD, 1, MPI_INT, 0, comm);
 }
 
 
@@ -250,6 +252,7 @@ void getNextSxSy(FILE *suFile, int *nextSx, int *nextSy)
   fseek(suFile, -80, SEEK_CUR);
 }
 
+
 void getSuTrace(FILE *suFile, SuTrace* trace, int curTraceIndex)
 {
 
@@ -265,8 +268,8 @@ void getSuTrace(FILE *suFile, SuTrace* trace, int curTraceIndex)
 
 }
 
-
-void Build_mpi_type(SuTrace* st, MPI_Datatype*  input_mpi_t_p  	/* out */) {
+/*
+void Build_mpi_type(SuTrace* st, MPI_Datatype*  input_mpi_t_p  */	/* out *//*) {
 
    int array_of_blocklengths[2] = {TH, 625};
    MPI_Datatype array_of_types[2] = {MPI_CHAR, MPI_FLOAT};
@@ -279,8 +282,7 @@ void Build_mpi_type(SuTrace* st, MPI_Datatype*  input_mpi_t_p  	/* out */) {
          array_of_displacements, array_of_types,
          input_mpi_t_p);
    MPI_Type_commit(input_mpi_t_p);
-}  /* Build_mpi_type */
-
+} */ /* Build_mpi_type */
 
 
 void getData(
@@ -290,13 +292,17 @@ void getData(
       unsigned int*	sx_p			/* out */,
       unsigned int*	sy_p			/* out */,
       uint8_t**         velocity_model_data_pp  /* out */,
+      unsigned long*	vModelSize		/* out */,
       int 		my_rank			/* in  */,
       int		comm_sz			/* in  */,
       MPI_Comm 		comm		       	/* in  */) {
 
-   unsigned long size;//, traceNumberLocalSum = 0;
+   unsigned int dest = 0;
    //MPI_Datatype segytrace_t;
    FILE *velocity_model_file_p;
+
+   *localTraceNumber = 0;
+   *vModelSize = 0;
    if(my_rank == 0)
    {
            //Open files 
@@ -318,21 +324,19 @@ void getData(
 	   }	
 
 	   int curSx = 0, curSy = 0;
-	   unsigned long traceNumber = 0, curTraceNumber = 0, prevTraceNumber = 0, prev2 = 0;
-           unsigned int  numberShot = 0, dest;
+	   unsigned long traceNumber = 0, curTraceNumber = 0, prev2 = 0; // prevTraceNumber = 0;
+           unsigned int  numberShot = 0;//, dest;
            
-           //getSegyTrace(*traces_data_pp, traceNumber, traces_SU_p);
-	   getNextSxSy(traces_SU_p, &curSx, &curSy);
-	   traces[0].sx = curSx;
-           traces[0].sy = curSy;
-           /*
-	   curSx = (*traces_data_pp)[traceNumber].sx;
-	   curSy = (*traces_data_pp)[traceNumber].sy;
-	   traceNumber++;
-           */
 
 	   while(traceNumber < nTQtt && numberShot < shotLimit)
 	   {
+		traces = (SuTrace*) malloc(nTMax*sizeof(SuTrace));
+
+	        for (i = 0; i < nTMax; i++)
+        	{
+        		traces[i].data = (float *) malloc(TD);
+	        }
+
 		curTraceNumber = 0;
 		prev2 = curTraceNumber;
 		getNextSxSy(traces_SU_p, &curSx, &curSy);
@@ -351,80 +355,81 @@ void getData(
 		*sx_p = traces[prev2].sx;
 		*sy_p = traces[prev2].sy;
 		numberShot++;
-	
-		/*	
-                if(traceNumber == TQtt)
-		{
-			curTraceNumber = traceNumber - prevTraceNumber;
-		}	
-                else
-		{
-			curTraceNumber = traceNumber - prevTraceNumber - 1;
-		}
-		*/
-
        		dest = numberShot % comm_sz;
-
+		MPI_Send(&dest, 1, MPI_INT, dest, 0, comm);
 		//Send Traces
 		if(dest != 0)
 		{
-	        	MPI_Send(&curTraceNumber, 1, MPI_LONG, dest, 0, MPI_COMM_WORLD);
+	        	MPI_Send(&curTraceNumber, 1, MPI_LONG, dest, 0, comm);
+		        MPI_Send(sx_p, 1, MPI_INT, dest, 0, comm);
+			MPI_Send(sy_p, 1, MPI_INT, dest, 0, comm);	
+			printf("%d enviou num traços locais %lu\n", my_rank, curTraceNumber);
+
 			for (i = 0; i < curTraceNumber; i++)
         		{
-				MPI_Send( &(traces[i]), TH, MPI_CHAR, dest, 0, MPI_COMM_WORLD);			
-				MPI_Send( traces[i].data, nSQtt, MPI_FLOAT, dest, 0, MPI_COMM_WORLD);
-				printf("%d enviou traço %lu\tSxReal: %d\tSyReal: %d\t Sx: %d\t Sy: %d\n", my_rank, prevTraceNumber+i, traces[i].sx, traces[i].sy, *sx_p, *sy_p);
+				MPI_Send( &(traces[i]), TH, MPI_CHAR, dest, 0, comm);			
+				MPI_Send( traces[i].data, nSQtt, MPI_FLOAT, dest, 0, comm);
+				printf("%d enviou traço %u\tSxReal: %d\tSyReal: %d\t Sx: %d\t Sy: %d\n", my_rank, i, traces[i].sx, traces[i].sy, *sx_p, *sy_p);
 			}	
 		}
 		else
 		{
+
 			*localTraceNumber = curTraceNumber;
 			*localTraces_pp = (SuTrace*) malloc(*localTraceNumber*sizeof(SuTrace));
 			for (i = 0; i < *localTraceNumber; i++)
            		{
                  		(*localTraces_pp)[i].data = (float *) malloc(TD);
            		}
+			
+			for (i = 0; i < *localTraceNumber; i++)
+        		{
+				memcpy( &((*localTraces_pp)[i]), &(traces[i]), TH);
+				memcpy( (*localTraces_pp)[i].data, traces[i].data, TD);
+                		printf("%d recebeu traço %d\n", my_rank, i);
+        		}				
 		}
 
-		printf("Destination: %u\tNumberShot: %u\tLocalTraceNumber: %lu\tTraceNumber: %lu\t PrevTN: %lu\n", dest, numberShot, *localTraceNumber, traceNumber, prevTraceNumber);
-		prevTraceNumber = traceNumber;
+		printf("Destination: %u\tNumberShot: %u\tLocalTraceNumber: %lu\tTraceNumber: %lu\n", dest, numberShot, curTraceNumber, traceNumber);
+		//prevTraceNumber = traceNumber;
 		free(traces);
 	}
 
 	printf("\nDistribuição dos traços concluída com sucesso!\n\n");
         //MPI_Type_free(&segytrace_t);
 	fclose(traces_SU_p);
-	traceNumber = nTQtt;
-
-	for (i = 1; i < comm_sz; i++)
-        {
-		MPI_Send(&traceNumber, 1, MPI_LONG, i, 0, MPI_COMM_WORLD);
-	}
-        
+       
    }	
-   else
+   else 
    {
-	//Receive Traces
-   	MPI_Status status;
-	//long traceNumberLocal = 0;
-	long i;
+        MPI_Recv(&dest, 1, MPI_INT, 0, 0, comm, MPI_STATUS_IGNORE);	
+	/*if(dest == my_rank)
+	{*/
+		//Receive Traces
+	   	MPI_Status status;
+		long i;
 	
-	MPI_Recv(localTraceNumber, 1, MPI_LONG, 0, 0, MPI_COMM_WORLD, &status);
-	*localTraces_pp = (SuTrace*) malloc(*localTraceNumber*sizeof(SuTrace));
+		MPI_Recv(localTraceNumber, 1, MPI_LONG, 0, 0, comm, &status);
+		MPI_Recv(sx_p, 1, MPI_INT, 0, 0, comm, &status);
+		MPI_Recv(sy_p, 1, MPI_INT, 0, 0, comm, &status);
+		printf("%d recebeu num traços locais %lu\n", my_rank, *localTraceNumber);
+		*localTraces_pp = (SuTrace*) malloc(*localTraceNumber*sizeof(SuTrace));
 
-        for (i = 0; i < *localTraceNumber; i++)
-        {
-	        (*localTraces_pp)[i].data = (float *) malloc(TD);
-        }
+        	for (i = 0; i < *localTraceNumber; i++)
+        	{
+	        	(*localTraces_pp)[i].data = (float *) malloc(TD);
+		}
 
-	for (i = 0; i < *localTraceNumber; i++)
-       	{
-		MPI_Recv( &((*localTraces_pp)[i]), TH, MPI_CHAR, 0, 0, MPI_COMM_WORLD, &status);
-		MPI_Recv((*localTraces_pp)[i].data, nSQtt, MPI_FLOAT, 0, 0, MPI_COMM_WORLD, &status);
-		printf("%d recebeu traço %lu\n", my_rank, i);
-	}
-
-    } 
+		printf("nSQTT: %u\t nTMax: %lu\t sL: %u\t nTQtt: %lu\t TD: %u\n", nSQtt, nTMax, shotLimit, nTQtt, TD);
+		printf("TD: %d\t localTData[0]: %.2f\n", TD, (*localTraces_pp)[111].data[0]);
+		for (i = 0; i < *localTraceNumber; i++)
+       		{
+			MPI_Recv( &((*localTraces_pp)[i]), TH, MPI_CHAR, 0, 0, comm, &status);
+			MPI_Recv( (*localTraces_pp)[i].data, nSQtt, MPI_FLOAT, 0, 0, comm, &status);
+			printf("%d recebeu traço %lu\n", my_rank, i);
+		}
+	//}
+    }	 
 
    //Broadcast Velocity Model
    if(my_rank == 0)
@@ -437,34 +442,36 @@ void getData(
            }
 
            fseek(velocity_model_file_p, 0, SEEK_END);
-           size = ftell(velocity_model_file_p);
+           *vModelSize = ftell(velocity_model_file_p);
            fseek(velocity_model_file_p, 0, SEEK_SET);
    }
    
-   MPI_Bcast(&size, 1, MPI_LONG, 0, comm);
+   MPI_Bcast(vModelSize, 1, MPI_LONG, 0, comm);
 
-   *velocity_model_data_pp = (uint8_t*) malloc(size*sizeof(uint8_t));
+   *velocity_model_data_pp = (uint8_t*) malloc((*vModelSize)*sizeof(uint8_t));
    if (*velocity_model_data_pp == NULL) {fputs ("Memory error",stderr); exit (2);}
 
    if(my_rank == 0)
    {
 	   size_t result;
-           result = fread(*velocity_model_data_pp, 1, size, velocity_model_file_p);
-           if (result != size) {fputs ("Reading error",stderr); exit (3);}
+           result = fread(*velocity_model_data_pp, 1, *vModelSize, velocity_model_file_p);
+           if (result != *vModelSize) {fputs ("Reading error",stderr); exit (3);}
 
 	   fclose(velocity_model_file_p);
 
    }
 
-   MPI_Bcast(*velocity_model_data_pp, size, MPI_CHAR, 0, comm);	
-
+   MPI_Bcast(*velocity_model_data_pp, *vModelSize, MPI_CHAR, 0, comm);	
+ 
    printf("My_rank: %d\tBroadcast do modelo de velocidades feito\n", my_rank);   
+}
 
 
+void printFile(SuTrace* traces, unsigned long localTraceNumber, uint8_t* velocity_model_data, unsigned long vModelSize, int my_rank)
+{
    //Output Su Files
    char fileName [20];
    sprintf(fileName, "output_%d.su", my_rank);
-
    FILE *outputSu_file;
    outputSu_file = fopen(fileName, "wb");
    if (outputSu_file == NULL)
@@ -472,14 +479,17 @@ void getData(
         fprintf(stderr, "Erro ao abrir arquivo outputSU\n");
   	exit(0);
    }
+   
    int i;
-   for(i = 0; i < *localTraceNumber; i++)
+
+   for(i = 0; i < localTraceNumber; i++)
    {
-	fwrite(&((*localTraces_pp)[i]), 1, TH, outputSu_file);
+	fwrite(&(traces[i]), 1, TH, outputSu_file);
 	fflush(outputSu_file);
-	fwrite((*localTraces_pp)[i].data, 1, TD, outputSu_file);
+	fwrite(traces[i].data, 1, TD, outputSu_file);
 	fflush(outputSu_file);
    }
+  
    fclose(outputSu_file);
 
    printf("My_rank: %d\tArquivo .su exportado\n", my_rank);
@@ -488,18 +498,19 @@ void getData(
    FILE *output_file;
    sprintf(fileName, "vModel_%d.ad", my_rank);
    output_file = fopen(fileName, "wb");
+
    if (output_file == NULL)
    {
    	fprintf(stderr, "Erro ao abrir arquivo output\n");
 	exit(0);
    }  
-   fwrite(*velocity_model_data_pp, 1, size, output_file);
-   fflush(output_file);
-   fclose(output_file);
    
-  
+   
+   fwrite(velocity_model_data, 1, vModelSize, output_file);
+   fflush(output_file);
+   
+   fclose(output_file);
    printf("My_rank: %d\tArquivo de modelo de velocidades exportado\n", my_rank);
- 
 } 
 
 
