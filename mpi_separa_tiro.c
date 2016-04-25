@@ -11,7 +11,7 @@
 //Melhorar variáveis e prints
 //Organizar e comentar código
 
-#define TH 		240 	// Trace Header bytes
+#define TH 	240 	// Trace Header bytes
 
 typedef struct { // 240-byte Trace Header + Data
   int tracl; // trace sequence number within line
@@ -109,9 +109,9 @@ typedef struct { // 240-byte Trace Header + Data
 
 //Function declarations
 void usage(char* errorMessage, int rank);
-void checkError(int local_ok, char fname[], char message[], MPI_Comm comm);
 void getInput(char* argv[], unsigned int* nSQtt, unsigned long* nTMax, unsigned int* shotLimit, unsigned long int* nTQtt, unsigned int* TD, int my_rank, int comm_sz, MPI_Comm comm);
-void getData(char* argv[], SuTrace** traces_data_pp, unsigned long* localTraceNumber, unsigned int* sx_p, unsigned int* sy_p, uint8_t** velocity_model_data_pp, unsigned long* vModelSize, int my_rank, int comm_sz, MPI_Comm comm);
+void getTraces(char* argv[], SuTrace** traces_data_pp, unsigned long* localTraceNumber, unsigned int* sx_p, unsigned int* sy_p, int my_rank, int comm_sz, MPI_Comm comm);
+void getVModel(char* argv[], uint8_t** velocity_model_data_pp, unsigned long* vModelSize, int my_rank, int comm_sz, MPI_Comm comm);
 void printFile(SuTrace* traces, unsigned long localTraceNumber, uint8_t* velocity_model_data, unsigned long vModelSize, int my_rank);
 
 //Global variables declaration
@@ -145,7 +145,8 @@ int main(int argc, char* argv[]) {
    }
  
    getInput(argv, &nSQtt, &nTMax, &shotLimit, &nTQtt, &TD, my_rank, comm_sz, comm);
-   getData(argv, &traces, &localTraceNumber, &sx, &sy, &velocity_model_data, &vModelSize, my_rank, comm_sz, comm);
+   getTraces(argv, &traces, &localTraceNumber, &sx, &sy, my_rank, comm_sz, comm);
+   getVModel(argv, &velocity_model_data, &vModelSize, my_rank, comm_sz, comm);
    printFile(traces, localTraceNumber, velocity_model_data, vModelSize, my_rank);
 
    if(localTraceNumber > 0)
@@ -164,28 +165,6 @@ int main(int argc, char* argv[]) {
    return 0;
 } 
 
-
-/*
-void Check_for_error(
-      int       local_ok, 
-      char      fname[],
-      char      message[], 
-      MPI_Comm  comm) {
-   int ok;
-
-   MPI_Allreduce(&local_ok, &ok, 1, MPI_INT, MPI_MIN, comm);
-   if (ok == 0) {
-      int my_rank;
-      MPI_Comm_rank(comm, &my_rank);
-      if (my_rank == 0) {
-         fprintf(stderr, "Proc %d > In %s, %s\n", my_rank, fname, 
-               message);
-         fflush(stderr);
-      }
-      MPI_Finalize();
-      exit(-1);
-   }
-} */ /* Check_for_error */
 
 
 void usage(char prog_name[], int my_rank) {
@@ -285,24 +264,20 @@ void Build_mpi_type(SuTrace* st, MPI_Datatype*  input_mpi_t_p  */	/* out *//*) {
 } */ /* Build_mpi_type */
 
 
-void getData(
+void getTraces(
       char*    		argv[]        		/* in  */,
       SuTrace**  	localTraces_pp		/* out */,
       unsigned long*	localTraceNumber	/* out */,
       unsigned int*	sx_p			/* out */,
       unsigned int*	sy_p			/* out */,
-      uint8_t**         velocity_model_data_pp  /* out */,
-      unsigned long*	vModelSize		/* out */,
       int 		my_rank			/* in  */,
       int		comm_sz			/* in  */,
       MPI_Comm 		comm		       	/* in  */) {
 
    unsigned int dest = 0;
    //MPI_Datatype segytrace_t;
-   FILE *velocity_model_file_p;
-
    *localTraceNumber = 0;
-   *vModelSize = 0;
+
    if(my_rank == 0)
    {
            //Open files 
@@ -430,6 +405,19 @@ void getData(
 		}
 	//}
     }	 
+}
+
+void getVModel(
+      char*             argv[]                  /* in  */,
+      uint8_t**         velocity_model_data_pp  /* out */,
+      unsigned long*    vModelSize              /* out */,
+      int               my_rank                 /* in  */,
+      int               comm_sz                 /* in  */,
+      MPI_Comm          comm                    /* in  */) 
+{
+
+   FILE *velocity_model_file_p;
+   //*vModelSize = 0;
 
    //Broadcast Velocity Model
    if(my_rank == 0)
