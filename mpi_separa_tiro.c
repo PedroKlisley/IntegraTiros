@@ -108,7 +108,7 @@ typedef struct { // 240-byte Trace Header + Data
 void usage(char* errorMessage, int rank);
 void printFile(SuTrace* traces, unsigned long localTraceNumber, unsigned int TD, uint8_t* velocity_model_data,  unsigned long vModelSize, int my_rank);
 void propagation(uint8_t* u_i, uint8_t* vModelData, int Xi, int Yi, int Zi, int dX, int dY, int dZ, int dt, int sx, int sy);
-void retropropagation(uint8_t* u_r, SuTrace* localTraces, uint8_t* vModelData, int Xi, int Yi, int Zi, int dX, int dY, int dZ, int dt, int gx, int gy);
+void backpropagation(uint8_t* u_r, SuTrace* localTraces, uint8_t* vModelData, int Xi, int Yi, int Zi, int dX, int dY, int dZ, int dt, int gx, int gy);
 void imageCondition(uint8_t* image, uint8_t* u_i, uint8_t* u_r, int Xi, int Yi, int Zi);
 
 //Global variables declaration
@@ -125,6 +125,8 @@ int main(int argc, char* argv[]) {
    SuTrace* localTraces;		//Local Traces Data		
    uint8_t* vModelData;			//Local Velocity Model Data
    unsigned long localTraceNumber = 0;  //Local Trace Number
+   unsigned long traceNumber = 0;       //Global Trace Number counter 
+   unsigned int  numberShot = 0;        //Number of shots counter
    unsigned long vModelSize;		//Size of Velocity Model Data (in Bytes)
    int sx; 				//Position x of shot source
    int sy; 				//Position y of shot source
@@ -175,7 +177,15 @@ int main(int argc, char* argv[]) {
    dt = atoi(argv[8]);
    ntssMax = atol(argv[10]);
    ntt = atol(argv[11]);
-   shotLimit = comm_sz-1;
+   shotLimit = 9;
+
+
+   // cria imagem local zerada
+   image = (uint8_t*) malloc(Xi*Yi*Zi*sizeof(uint8_t));
+   for (i = 0; i < Xi*Yi*Zi; i++)
+   {
+   	image[i] = 0;
+   }
 
 
    /***** Get Velocity Model *****/
@@ -237,9 +247,7 @@ int main(int argc, char* argv[]) {
 	   //Declare and initialize local variables
            int curSx = 0;			//Position x of shot source of the current trace
 	   int curSy = 0;			//Position y of shot source of the current trace
-           unsigned long traceNumber = 0; 	//Global Trace Number counter	
 	   unsigned long curTraceNumber = 0;    //Local Trace Number Counter
-           unsigned int  numberShot = 0;	//Number of shots counter
            unsigned int  dest;			//Destination process index
 	   FILE *suFile;			//SU File
 	   SuTrace* traces;			//SU Traces
@@ -310,7 +318,6 @@ int main(int argc, char* argv[]) {
                 curTraceNumber = 0;
 
 
-		//printf("Ants\tTotalTraceNumber: %lu\tTraceNumber: %lu\tSxReal: %d\tSyReal: %d\t Sx: %d\t Sy: %d\n", ntt, traceNumber, curSx, curSy, sx, sy);
 
                 while(sx == curSx && sy == curSy && traceNumber < ntt)	//Get traces from the same shot
                 {
@@ -344,7 +351,7 @@ int main(int argc, char* argv[]) {
                                 }
                                 fseek(suFile, -80, SEEK_CUR);
                         }
-			printf("TotalTraceNumber: %lu\tTraceNumber: %lu\tSxReal: %d\tSyReal: %d\t Sx: %d\t Sy: %d\n", ntt, traceNumber, curSx, curSy, sx, sy);
+			//printf("Calculando\tTotalTraceNumber: %lu\tTraceNumber: %lu\tSxReal: %d\tSyReal: %d\t Sx: %d\t Sy: %d\n", ntt, traceNumber, curSx, curSy, sx, sy);
 
                 }
 
@@ -352,94 +359,116 @@ int main(int argc, char* argv[]) {
                 //Send common shot traces number and shot source
                 MPI_Send(&curTraceNumber, 1, MPI_LONG, dest, 0, comm);
                 printf("%d enviou num traços locais %lu\n", my_rank, curTraceNumber);	
-		int nas = (int) ns;
-		//Send Traces
 		
+		
+		//Send Traces
                 for (i = 0; i < curTraceNumber; i++)
                 {
                 	MPI_Send( &(traces[i]), TH, MPI_CHAR, dest, 0, comm);
-                        MPI_Send( traces[i].data, nas, MPI_FLOAT, dest, 0, comm);
-                        printf("%d enviou traço %u\tSxReal: %d\tSyReal: %d\t Sx: %d\t Sy: %d\n", my_rank, i, traces[i].sx, traces[i].sy, sx, sy);
+                        MPI_Send( traces[i].data, ns, MPI_FLOAT, dest, 0, comm);
+                        //printf("%d enviou traço %u\tSxReal: %d\tSyReal: %d\t Sx: %d\t Sy: %d\n", my_rank, i, traces[i].sx, traces[i].sy, sx, sy);
                 }
+
+
+		//Broadcast total trace number count	
+		MPI_Bcast(&traceNumber, 1, MPI_LONG, 0, comm);		
+
 
                 printf("Destination: %u\tNumberShot: %u\tLocalTraceNumber: %lu\tTraceNumber: %lu\n", dest, numberShot, curTraceNumber, traceNumber);
 		numberShot++;
         }
 
-        printf("\nDistribuição dos traços concluída com sucesso!\n\n");
+        printf("\nMy_rank: %d\tDistribuição dos traços concluída com sucesso!\n", my_rank);
 	free(traces);
         fclose(suFile);
 
    }
    else
    {
-                MPI_Status status;	//Status of MPI communication
+	MPI_Status status;	//Status of MPI communication
+			
+
+	u_i = (uint8_t*) malloc(Xi*Yi*Zi*sizeof(uint8_t));
+	u_r = (uint8_t*) malloc(Xi*Yi*Zi*sizeof(uint8_t));
+	
+
+
+	//Broadcast number of samples (ns)
+	MPI_Bcast(&ns, 1, MPI_SHORT, 0, comm);       
+	TD = ns*sizeof(float);
+	
+
+	while(traceNumber < ntt && numberShot < shotLimit)
+	{
 
 		
-		// cria imagem local zerada
-		u_i = (uint8_t*) malloc(Xi*Yi*Zi*sizeof(uint8_t));
-		u_r = (uint8_t*) malloc(Xi*Yi*Zi*sizeof(uint8_t));
-		image = (uint8_t*) malloc(Xi*Yi*Zi*sizeof(uint8_t));
-		for (i = 0; i < Xi*Yi*Zi; i++)
-                {
-			image[i] = 0;
+		if(my_rank != (numberShot % (comm_sz-1)) + 1)
+		{
+			MPI_Bcast(&traceNumber, 1, MPI_LONG, 0, comm);
 		}
+		else
+		{
+			//Receive shot source
+			MPI_Recv(&sx, 1, MPI_INT, 0, 0, comm, &status);
+			MPI_Recv(&sy, 1, MPI_INT, 0, 0, comm, &status);
 
 
-		//Broadcast number of samples (ns)
-        	MPI_Bcast(&ns, 1, MPI_SHORT, 0, comm);       
-	        TD = ns*sizeof(float);
+			// assinatura propagacao
+			//Se propagacao for muito custoso deve estar depois de receber traços pois processo 0 ficará esperando
+			propagation(u_i, vModelData, Xi, Yi, Zi, dX, dY, dZ, dt, sx, sy);
+
+
+			//Receive common shot traces number and shot source
+			MPI_Recv(&localTraceNumber, 1, MPI_LONG, 0, 0, comm, &status);
+			printf("%d recebeu num traços locais %lu\n", my_rank, localTraceNumber);
+
+
+			//Allocate Local Traces
+			localTraces = (SuTrace*) malloc(localTraceNumber*sizeof(SuTrace));
+			for (i = 0; i < localTraceNumber; i++)
+			{
+				localTraces[i].data = (float *) malloc(TD);
+			}
+
+			//Receive Traces
+			for (i = 0; i < localTraceNumber; i++)
+			{
+				MPI_Recv( &(localTraces[i]), TH, MPI_CHAR, 0, 0, comm, &status);
+				MPI_Recv( localTraces[i].data, ns, MPI_FLOAT, 0, 0, comm, &status);
+				//printf("%d recebeu traço %u\n", my_rank, i);
+			}
+
 		
-
-		//Receive shot source
-		MPI_Recv(&sx, 1, MPI_INT, 0, 0, comm, &status);
-                MPI_Recv(&sy, 1, MPI_INT, 0, 0, comm, &status);
+			// recebe numero total de tracos
+			MPI_Bcast(&traceNumber, 1, MPI_LONG, 0, comm);
 
 
-		// assinatura propagacao
-		propagation(u_i, vModelData, Xi, Yi, Zi, dX, dY, dZ, dt, sx, sy);
+			printf("My_rank: %u\tNumberShot: %u\tLocalTraceNumber: %lu\tTraceNumber: %lu\n", my_rank, numberShot, localTraceNumber, traceNumber);
 
 
-		//Receive common shot traces number and shot source
-                MPI_Recv(&localTraceNumber, 1, MPI_LONG, 0, 0, comm, &status);
-                printf("%d recebeu num traços locais %lu\n", my_rank, localTraceNumber);
+			// assinatura retropropagacao
+			backpropagation(u_r, localTraces, vModelData, Xi, Yi, Zi, dX, dY, dZ, dt, gx, gy);
 
 
-		//Allocate Local Traces
-                localTraces = (SuTrace*) malloc(localTraceNumber*sizeof(SuTrace));
-                for (i = 0; i < localTraceNumber; i++)
-                {
-                        localTraces[i].data = (float *) malloc(TD);
-                }
-
-		//Receive Traces
-                for (i = 0; i < localTraceNumber; i++)
-                {
-                        MPI_Recv( &(localTraces[i]), TH, MPI_CHAR, 0, 0, comm, &status);
-                        MPI_Recv( localTraces[i].data, ns, MPI_FLOAT, 0, 0, comm, &status);
-                        printf("%d recebeu traço %u\n", my_rank, i);
-                }
+			// assinatura correlacao cruzada
+			imageCondition(image, u_i, u_r, Xi, Yi, Zi);
 
 
-		// assinatura retropropagacao
-                retropropagation(u_r, localTraces, vModelData, Xi, Yi, Zi, dX, dY, dZ, dt, gx, gy);
+			// adicionar a imagem local
+				
 
+		}
+		numberShot++;
+	}
 
-                // assinatura correlacao cruzada
-		imageCondition(image, u_i, u_r, Xi, Yi, Zi);
-
-
-                // adicionar a imagem local
-		
-
-
-		// recebe info propagacao
-		// assinatura propagacao
-		// recebe tracos
-		// assinatura retropropagacao
-		// assinatura correlacao cruzada
-		// adicionar a imagem local
-    }
+	printf("\nMy_rank: %d\tDistribuição dos traços concluída com sucesso!\n", my_rank);
+	// recebe info propagacao
+	// assinatura propagacao
+	// recebe tracos
+	// assinatura retropropagacao
+	// assinatura correlacao cruzada
+	// adicionar a imagem local
+}
     /*****  End of Get Traces *****/
 
 
@@ -485,7 +514,7 @@ void propagation(uint8_t* u_i, uint8_t* vModelData, int Xi, int Yi, int Zi, int 
 }
 
 
-void retropropagation(uint8_t* u_r, SuTrace* localTraces, uint8_t* vModelData, int Xi, int Yi, int Zi, int dX, int dY, int dZ, int dt, int gx, int gy)
+void backpropagation(uint8_t* u_r, SuTrace* localTraces, uint8_t* vModelData, int Xi, int Yi, int Zi, int dX, int dY, int dZ, int dt, int gx, int gy)
 {
 
 }
