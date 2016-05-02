@@ -5,8 +5,12 @@
 #include <mpi.h>
 #include <limits.h>
 
-//Melhorar variáveis e prints
-//Organizar e comentar código
+
+// Exemplo de compilação do programa
+// mpicc -g -Wall -o mpi_separa_tiro.bin mpi_separa_tiro.c
+
+// Exemplo de execução do programa
+// mpiexec -n 4 mpi_separa_tiro.bin VEL_210x427x427.ad 210 427 427 1 1 1 1 3DSEGEAGE.su 544 2286908 
 
 #define TH 	240 	// Trace Header bytes
 
@@ -110,7 +114,9 @@ void printFile(SuTrace* traces, unsigned long localTraceNumber, unsigned int TD,
 void propagation(uint8_t* u_i, uint8_t* vModelData, int Xi, int Yi, int Zi, int dX, int dY, int dZ, int dt, int sx, int sy);
 void backpropagation(uint8_t* u_r, SuTrace* localTraces, uint8_t* vModelData, int Xi, int Yi, int Zi, int dX, int dY, int dZ, int dt, int gx, int gy);
 void imageCondition(uint8_t* image, uint8_t* u_i, uint8_t* u_r, int Xi, int Yi, int Zi);
+void invBytes(void * valor, int nBytes);
 
+ 
 //Global variables declaration
 unsigned int ns;
 unsigned long ntssMax; 
@@ -149,7 +155,8 @@ int main(int argc, char* argv[]) {
    int dt;
    int gx = 1;
    int gy = 1;
-   uint8_t *image;
+   uint8_t* localImage;
+   uint8_t* image;
    uint8_t* u_i; 
    uint8_t* u_r;
 
@@ -177,14 +184,14 @@ int main(int argc, char* argv[]) {
    dt = atoi(argv[8]);
    ntssMax = atol(argv[10]);
    ntt = atol(argv[11]);
-   shotLimit = 9;
+   shotLimit = 11;
 
 
    // cria imagem local zerada
-   image = (uint8_t*) malloc(Xi*Yi*Zi*sizeof(uint8_t));
+   localImage = (uint8_t*) malloc(Xi*Yi*Zi*sizeof(uint8_t));
    for (i = 0; i < Xi*Yi*Zi; i++)
    {
-   	image[i] = 0;
+   	localImage[i] = 0;
    }
 
 
@@ -234,7 +241,7 @@ int main(int argc, char* argv[]) {
    }
 
    //Broadcast velocity model data
-   MPI_Bcast(vModelData, vModelSize, MPI_CHAR, 0, comm);
+   MPI_Bcast(vModelData, vModelSize, MPI_UINT8_T, 0, comm);
 
    printf("My_rank: %d\tBroadcast do modelo de velocidades feito\n", my_rank);
 
@@ -252,7 +259,7 @@ int main(int argc, char* argv[]) {
 	   FILE *suFile;			//SU File
 	   SuTrace* traces;			//SU Traces
 
-           
+	           
            //Open SU file
            suFile = fopen(argv[9], "rb");
            if (suFile == NULL)
@@ -264,16 +271,18 @@ int main(int argc, char* argv[]) {
 	   
 	   //Get number of samples (ns)
 	   //Valor de ns no arquivo = 28930
-	   /*
+	   
 	   fseek(suFile, 114, SEEK_CUR);
-           if (fread(&ns, 1, sizeof(short), suFile) != sizeof(short)) {
+           if (fread(&ns, 1, sizeof(unsigned short), suFile) != sizeof(unsigned short)) {
                    printf("getSuTrace failed!\n");
                    exit(0);
            }
 	   fseek(suFile, -116, SEEK_CUR);
-	   */
+	   
+	   
+	   invBytes(&ns, sizeof(unsigned short));//Invert bytes
+	   //ns = 625;
 
-	   ns = 625;
 
 	   //Broadcast number of samples (ns)
 	   MPI_Bcast(&ns, 1, MPI_SHORT, 0, comm);	   
@@ -281,12 +290,21 @@ int main(int argc, char* argv[]) {
 
 	   printf("NS: %d\t TD: %d\tSizeof(short): %lu\n", ns, TD, sizeof(short));
 
+
 	   //Allocate Traces
            traces = (SuTrace*) malloc(ntssMax*sizeof(SuTrace));
            for (i = 0; i < ntssMax; i++)
            {
 	           traces[i].data = (float *) malloc(TD);
            }
+
+
+	   //Allocate Image		   
+	   image = (uint8_t*) malloc(Xi*Yi*Zi*sizeof(uint8_t));
+   	   for (i = 0; i < Xi*Yi*Zi; i++)
+   	   {
+   	   	image[i] = 0;
+   	   }
 
 
            while(traceNumber < ntt && numberShot < shotLimit)
@@ -303,7 +321,10 @@ int main(int argc, char* argv[]) {
                 }
                 fseek(suFile, -80, SEEK_CUR);
 
-		
+		//Invert bytes
+		invBytes(&curSx, sizeof(int));
+		invBytes(&curSy, sizeof(int));	
+
 		dest = (numberShot % (comm_sz-1)) + 1; //Compute destination process
 
 
@@ -350,6 +371,9 @@ int main(int argc, char* argv[]) {
                                         exit(0);
                                 }
                                 fseek(suFile, -80, SEEK_CUR);
+
+				invBytes(&curSx, sizeof(int));
+		                invBytes(&curSy, sizeof(int));
                         }
 			//printf("Calculando\tTotalTraceNumber: %lu\tTraceNumber: %lu\tSxReal: %d\tSyReal: %d\t Sx: %d\t Sy: %d\n", ntt, traceNumber, curSx, curSy, sx, sy);
 
@@ -358,13 +382,13 @@ int main(int argc, char* argv[]) {
 
                 //Send common shot traces number and shot source
                 MPI_Send(&curTraceNumber, 1, MPI_LONG, dest, 0, comm);
-                printf("%d enviou num traços locais %lu\n", my_rank, curTraceNumber);	
+                //printf("%d enviou num traços locais %lu\n", my_rank, curTraceNumber);	
 		
 		
 		//Send Traces
                 for (i = 0; i < curTraceNumber; i++)
                 {
-                	MPI_Send( &(traces[i]), TH, MPI_CHAR, dest, 0, comm);
+                	MPI_Send( &(traces[i]), TH, MPI_UINT8_T, dest, 0, comm);
                         MPI_Send( traces[i].data, ns, MPI_FLOAT, dest, 0, comm);
                         //printf("%d enviou traço %u\tSxReal: %d\tSyReal: %d\t Sx: %d\t Sy: %d\n", my_rank, i, traces[i].sx, traces[i].sy, sx, sy);
                 }
@@ -388,10 +412,10 @@ int main(int argc, char* argv[]) {
 	MPI_Status status;	//Status of MPI communication
 			
 
+	//Allocate Wave values
 	u_i = (uint8_t*) malloc(Xi*Yi*Zi*sizeof(uint8_t));
 	u_r = (uint8_t*) malloc(Xi*Yi*Zi*sizeof(uint8_t));
 	
-
 
 	//Broadcast number of samples (ns)
 	MPI_Bcast(&ns, 1, MPI_SHORT, 0, comm);       
@@ -420,7 +444,7 @@ int main(int argc, char* argv[]) {
 
 			//Receive common shot traces number and shot source
 			MPI_Recv(&localTraceNumber, 1, MPI_LONG, 0, 0, comm, &status);
-			printf("%d recebeu num traços locais %lu\n", my_rank, localTraceNumber);
+			//printf("%d recebeu num traços locais %lu\n", my_rank, localTraceNumber);
 
 
 			//Allocate Local Traces
@@ -433,7 +457,7 @@ int main(int argc, char* argv[]) {
 			//Receive Traces
 			for (i = 0; i < localTraceNumber; i++)
 			{
-				MPI_Recv( &(localTraces[i]), TH, MPI_CHAR, 0, 0, comm, &status);
+				MPI_Recv( &(localTraces[i]), TH, MPI_UINT8_T, 0, 0, comm, &status);
 				MPI_Recv( localTraces[i].data, ns, MPI_FLOAT, 0, 0, comm, &status);
 				//printf("%d recebeu traço %u\n", my_rank, i);
 			}
@@ -451,14 +475,12 @@ int main(int argc, char* argv[]) {
 
 
 			// assinatura correlacao cruzada
-			imageCondition(image, u_i, u_r, Xi, Yi, Zi);
-
-
-			// adicionar a imagem local
-				
+			imageCondition(localImage, u_i, u_r, Xi, Yi, Zi);
 
 		}
 		numberShot++;
+		
+		
 	}
 
 	printf("\nMy_rank: %d\tDistribuição dos traços concluída com sucesso!\n", my_rank);
@@ -472,13 +494,20 @@ int main(int argc, char* argv[]) {
     /*****  End of Get Traces *****/
 
 
+
+   // adicionar a imagem local
+   MPI_Reduce(localImage, image, Xi*Yi*Zi, MPI_UINT8_T, MPI_SUM, 0, comm);
+
+ 
    //Print data to File
-  // printFile(localTraces, localTraceNumber, TD, vModelData, vModelSize, my_rank);
+   //printFile(localTraces, localTraceNumber, TD, vModelData, vModelSize, my_rank);
 
 
    //Free pointers
    if(localTraceNumber > 0)
    {
+	invBytes(&localTraces[0].sx, sizeof(int));
+	invBytes(&localTraces[localTraceNumber-1].sy, sizeof(int));
 	printf("Thread: %d\t ficou com %lu traços\tSxReal: %d\tSyReal: %d\t Sx: %d\t Sy: %d\n", my_rank, localTraceNumber, localTraces[0].sx, localTraces[localTraceNumber-1].sy, sx, sy);
    	free(localTraces);
    }
@@ -506,6 +535,25 @@ void usage(char prog_name[], int my_rank) {
    MPI_Finalize();
    exit(0);
 } 
+
+
+void invBytes(void * valor, int nBytes) { // Inverte ordem dos bytes
+
+  int i;
+  uint8_t swap, bytes[nBytes];
+
+  memcpy(bytes, valor, nBytes);
+
+  for (i = 0; i < nBytes/2; i++) 
+  {
+    swap = bytes[i];
+    bytes[i] = bytes[nBytes-i-1];
+    bytes[nBytes-i-1] = swap;
+  }
+
+  memcpy(valor, bytes, nBytes);
+
+}
 
 
 void propagation(uint8_t* u_i, uint8_t* vModelData, int Xi, int Yi, int Zi, int dX, int dY, int dZ, int dt, int sx, int sy)
