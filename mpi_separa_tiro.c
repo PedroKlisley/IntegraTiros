@@ -4,15 +4,30 @@
 #include <string.h>
 #include <mpi.h>
 #include <limits.h>
-
+#include <math.h>
+#include "field.c"
 
 // Exemplo de compilação do programa
 // mpicc -g -Wall -o mpi_separa_tiro.bin mpi_separa_tiro.c
 
 // Exemplo de execução do programa
-// mpiexec -n 4 mpi_separa_tiro.bin VEL_210x427x427.ad 210 427 427 1 1 1 1 3DSEGEAGE.su 544 2286908 
+// mpiexec -n 2 mpi_separa_tiro.bin VEL_210x427x427.ad 427 427 210 20 20 20 0.008 3720 11840 500 8660 3DSEGEAGE.su 544 2286908 
+
+//Resolucao do modelo de velocidades é o dobro da resolucao do sismograma
+//dX = 20, dY = 20, dz = 20
+
+//Limites do mapeamento
+//gx       3720 11840 (3720 - 11840)
+//gy       500 8660 (500 - 8660)
+
+//Faer otimizacao e expansao do modelo de velocidades 
 
 #define TH 	240 	// Trace Header bytes
+
+#define ncx 5 // number of coefficients of the finite difference in x: order/2 + 1
+#define ncy 5 // number of coefficients of the finite difference in y: order/2 + 1
+#define ncz 5 // number of coefficients of the finite difference in z: order/2 + 1
+#define freq 12.0 // source frequency
 
 typedef struct { // 240-byte Trace Header + Data
   int tracl; // trace sequence number within line
@@ -110,32 +125,34 @@ typedef struct { // 240-byte Trace Header + Data
 
 //Function declarations
 void usage(char* errorMessage, int rank);
-void printFile(SuTrace* traces, unsigned long localTraceNumber, unsigned int TD, uint8_t* velocity_model_data,  unsigned long vModelSize, int my_rank);
-void propagation(uint8_t* u_i, uint8_t* vModelData, int Xi, int Yi, int Zi, int dX, int dY, int dZ, int dt, int sx, int sy);
-void backpropagation(uint8_t* u_r, SuTrace* localTraces, uint8_t* vModelData, int Xi, int Yi, int Zi, int dX, int dY, int dZ, int dt, int gx, int gy);
+void printFile(SuTrace* traces, unsigned long localTraceNumber, unsigned int TD, float* velocity_model_data,  unsigned long vModelSize, int my_rank);
+void propagation(float *vel, int Xi, int Yi, int Zi, unsigned int localXbi, unsigned int localYbi, unsigned int localgxMin, unsigned int localgyMin, float dx, float dy, float dz, float *tr, unsigned short Ti, float dt, int *trc, int Ntr, int wri, char *wffn, int bw);
+void backpropagation(uint8_t* u_r, SuTrace* localTraces, float* vModelData, int Xi, int Yi, int Zi, float dX, float dY, float dZ, int dt, int gx, int gy);
 void imageCondition(uint8_t* image, uint8_t* u_i, uint8_t* u_r, int Xi, int Yi, int Zi);
 void invBytes(void * valor, int nBytes);
+float source(float t);
 
- 
+/* 
 //Global variables declaration
 unsigned int ns;
 unsigned long ntssMax; 
 unsigned int shotLimit; 
 unsigned long ntt;
 unsigned int TD;
-
+*/
 
 int main(int argc, char* argv[]) {
 
    //Variable declarations
    SuTrace* localTraces;		//Local Traces Data		
-   uint8_t* vModelData;			//Local Velocity Model Data
+   float* vModelData;			//Local Velocity Model Data
    unsigned long localTraceNumber = 0;  //Local Trace Number
    unsigned long traceNumber = 0;       //Global Trace Number counter 
    unsigned int  numberShot = 0;        //Number of shots counter
    unsigned long vModelSize;		//Size of Velocity Model Data (in Bytes)
    int sx; 				//Position x of shot source
    int sy; 				//Position y of shot source
+   int sz; 				//Position z of shot source
    unsigned short ns;			//Number of Samples
    unsigned long ntssMax;		//Maximum Number of Traces of the same shot
    unsigned int shotLimit;		//Number of shots analyzed
@@ -149,12 +166,19 @@ int main(int argc, char* argv[]) {
    int Xi;
    int Yi;
    int Zi;
-   int dX;
-   int dY;
-   int dZ;
+   float dX;
+   float dY;
+   float dZ;
    int dt;
-   int gx = 1;
-   int gy = 1;
+
+   unsigned int gxMin;
+   unsigned int gxMax;
+   unsigned int gyMin;
+   unsigned int gyMax;
+
+   unsigned int gx = 1;
+   unsigned int gy = 1;
+
    uint8_t* localImage;
    uint8_t* image;
    uint8_t* u_i; 
@@ -168,7 +192,7 @@ int main(int argc, char* argv[]) {
 
 
    // Check command line arguments
-   if (argc != 12) 
+   if (argc != 16) 
    {
 	usage(argv[0], my_rank); 
    }
@@ -182,9 +206,16 @@ int main(int argc, char* argv[]) {
    dY = atoi(argv[6]);
    dZ = atoi(argv[7]);
    dt = atoi(argv[8]);
-   ntssMax = atol(argv[10]);
-   ntt = atol(argv[11]);
-   shotLimit = 11;
+   
+   gxMin = atoi(argv[9]);
+   gxMax = atoi(argv[10]);
+   gyMin = atoi(argv[11]);
+   gyMax = atoi(argv[12]);
+
+   ntssMax = atol(argv[14]);
+   ntt = atol(argv[15]);
+
+   shotLimit = 1;
 
 
    // cria imagem local zerada
@@ -220,10 +251,10 @@ int main(int argc, char* argv[]) {
    printf("My_rank: %d\tBroadcast do tamanho de velocidades feito\n", my_rank);
 
    //Allocate velocity model data
-   vModelData = (uint8_t*) malloc((vModelSize)*sizeof(uint8_t));
+   vModelData = (float*) malloc(vModelSize);
    if (vModelData == NULL) {fputs ("Memory error",stderr); exit (2);}
 
-   printf("My_rank: %d\t Alocou velocidades feito\n", my_rank);
+   printf("My_rank: %d\t Alocou modelo de velocidades\n", my_rank);
 
    if(my_rank == 0)
    {
@@ -234,18 +265,83 @@ int main(int argc, char* argv[]) {
                 exit (3);
          }
 
-	 printf("My_rank: %d\t Leu velocidades feito\n", my_rank);
+	 printf("My_rank: %d\t Leu modelo de velocidades\n", my_rank);
          //Close velocity model file
          fclose(vModelFile);
 
+
+
    }
 
+  unsigned long Xbi, Ybi, Zbi, indb, ind;
+  int xi, xbi, yi, ybi, zi, zbi; // auxiliary variables
+  unsigned int bw = 10;
+  float *vel; // auxiliary variables
+
+  // Auxiliary variables initialization
+  Xbi = Xi + 2*bw;
+  Ybi = Yi + 2*bw;
+  Zbi = Zi + 2*bw;
+
+  // Memory allocation
+  vel = (float *) malloc(Xbi*Ybi*Zbi*sizeof(float));
+  if (vel == NULL) {
+    printf("Memory allocation failed: vel.\n");
+    return 0;
+  }  
+
+  
+
+  if(my_rank == 0)
+  {
+
+  printf("My_rank: %d\tRealizando expansão do modelo de velocidades\n", my_rank);
+
+  // Optimization
+  for (xi = 0; xi < Xi; xi++) {
+    for (yi = 0; yi < Yi; yi++) {
+      for (zi = 0; zi < Zi; zi++) {
+        ind = xi*Yi*Zi + yi*Zi + zi;
+        indb = (bw+xi)*Ybi*Zbi + (bw+yi)*Zbi + bw+zi;
+        vel[indb] = dt*dt*vModelData[ind]*vModelData[ind];
+      }
+    }
+  }
+    
+  // Expansion of the velocity model for the borders  
+  for (xbi = bw; xbi < bw+Xi; xbi++) { // copying top and bottom faces -> z
+    for (ybi = bw; ybi < bw+Yi; ybi++) {
+      for (zbi = 0; zbi < bw; zbi++) {
+        vel[xbi*Ybi*Zbi + ybi*Zbi + zbi] = vel[xbi*Ybi*Zbi + ybi*Zbi + bw];
+        vel[xbi*Ybi*Zbi + ybi*Zbi + Zbi-1-zbi] = vel[xbi*Ybi*Zbi + ybi*Zbi + Zbi-1-bw];
+      }
+    }
+  }  
+  for (xbi = bw; xbi < bw+Xi; xbi++) { // copying left and right faces -> y
+    for (zbi = 0; zbi < Zbi; zbi++) {
+      for (ybi = 0; ybi < bw; ybi++) {
+        vel[xbi*Ybi*Zbi + ybi*Zbi + zbi] = vel[xbi*Ybi*Zbi + bw*Zbi + zbi];
+        vel[xbi*Ybi*Zbi + (Ybi-1-ybi)*Zbi + zbi] = vel[xbi*Ybi*Zbi + (Ybi-1-bw)*Zbi + zbi];
+      }
+    }
+  }
+  for (ybi = 0; ybi < Ybi; ybi++) { // copying front and back faces -> x
+    for (zbi = 0; zbi < Zbi; zbi++) {
+      for (xbi = 0; xbi < bw; xbi++) {
+        vel[xbi*Ybi*Zbi + ybi*Zbi + zbi] = vel[bw*Ybi*Zbi + ybi*Zbi + zbi];
+        vel[(Xbi-1-xbi)*Ybi*Zbi + ybi*Zbi + zbi] = vel[(Xbi-1-bw)*Ybi*Zbi + ybi*Zbi + zbi];
+      }
+    }
+  }
+  }
+
    //Broadcast velocity model data
-   MPI_Bcast(vModelData, vModelSize, MPI_UINT8_T, 0, comm);
+   MPI_Bcast(vel, Xbi*Ybi*Zbi, MPI_FLOAT, 0, comm);
 
    printf("My_rank: %d\tBroadcast do modelo de velocidades feito\n", my_rank);
 
    /***** End of Get Velocity Model *****/
+
 
 
    /*****  Get Traces *****/  
@@ -254,6 +350,7 @@ int main(int argc, char* argv[]) {
 	   //Declare and initialize local variables
            int curSx = 0;			//Position x of shot source of the current trace
 	   int curSy = 0;			//Position y of shot source of the current trace
+	   unsigned int curGx, curGy;
 	   unsigned long curTraceNumber = 0;    //Local Trace Number Counter
            unsigned int  dest;			//Destination process index
 	   FILE *suFile;			//SU File
@@ -261,7 +358,7 @@ int main(int argc, char* argv[]) {
 
 	           
            //Open SU file
-           suFile = fopen(argv[9], "rb");
+           suFile = fopen(argv[13], "rb");
            if (suFile == NULL)
            {
                 fprintf(stderr, "Erro ao abrir arquivo %s\n", argv[9]);
@@ -309,8 +406,15 @@ int main(int argc, char* argv[]) {
 
            while(traceNumber < ntt && numberShot < shotLimit)
            {
-	        //Get Next Sx and Sy                    
-                fseek(suFile, 72, SEEK_CUR);
+	        //Get Next Sdepth                    
+		fseek(suFile, 48, SEEK_CUR);
+		if (fread(&sz, 1, sizeof(int), suFile) != sizeof(int)) {
+                        printf("getSuTrace failed!\n");
+                        exit(0);
+                }
+
+	        //Get Next Sx and Sy                  
+                fseek(suFile, 20, SEEK_CUR);
                 if (fread(&curSx, 1, sizeof(int), suFile) != sizeof(int)) {
                         printf("getSuTrace failed!\n");
                         exit(0);
@@ -324,6 +428,7 @@ int main(int argc, char* argv[]) {
 		//Invert bytes
 		invBytes(&curSx, sizeof(int));
 		invBytes(&curSy, sizeof(int));	
+		invBytes(&sz, sizeof(int));	
 
 		dest = (numberShot % (comm_sz-1)) + 1; //Compute destination process
 
@@ -331,18 +436,19 @@ int main(int argc, char* argv[]) {
 		//Send shot source (sx,sy)
                 MPI_Send(&curSx, 1, MPI_INT, dest, 0, comm);
                 MPI_Send(&curSy, 1, MPI_INT, dest, 0, comm);		
-
+                MPI_Send(&sz, 1, MPI_INT, dest, 0, comm);
 
 		//Initialize variables
                 sx = curSx;
                 sy = curSy;
                 curTraceNumber = 0;
 
-
+		gxMax = gyMax = 0;
+		gxMin = gyMin = INT_MAX;
 
                 while(sx == curSx && sy == curSy && traceNumber < ntt)	//Get traces from the same shot
                 {
-                        //Get Trace
+		        //Get Trace
                         if (fread(&(traces[curTraceNumber]), 1, TH, suFile) != TH) {
                                 printf("getSuTrace failed!\n");
                                 exit(0);
@@ -352,6 +458,33 @@ int main(int argc, char* argv[]) {
                                 exit(0);
                         }
 
+
+			//Get Current Gx and Gy
+			curGx = traces[curTraceNumber].gx;
+			curGy = traces[curTraceNumber].gy;
+			invBytes(&curGx, sizeof(int));
+			invBytes(&curGy, sizeof(int));
+
+			printf("TraceNumber = %lu\t\tgxMin = %u\tgxMax = %u\tgyMin = %u\tgyMax = %u\n", traceNumber, gxMin, gxMax, gyMin, gyMax);
+	
+			//Get max/min Gx and Gy
+			if(curGx > gxMax)
+			{
+				gxMax = curGx;
+			}	
+			if(curGx < gxMin)
+			{
+				gxMin = curGx;
+			}
+
+			if(curGy > gyMax)
+                        {
+                                gyMax = curGy;
+                        }
+			if(curGy < gyMin)
+                        {
+                                gyMin = curGy;
+                        }
 
                         //Increment variables
                         traceNumber++;
@@ -379,6 +512,14 @@ int main(int argc, char* argv[]) {
 
                 }
 
+		printf("gxMin = %u\tgxMax = %u\tgyMin = %u\tgyMax = %u\n", gxMin, gxMax, gyMin, gyMax);
+
+		
+		//Receive shot source
+                MPI_Send(&gxMin, 1, MPI_INT, dest, 0, comm);
+                MPI_Send(&gxMax, 1, MPI_INT, dest, 0, comm);
+                MPI_Send(&gyMin, 1, MPI_INT, dest, 0, comm);
+                MPI_Send(&gyMax, 1, MPI_INT, dest, 0, comm);
 
                 //Send common shot traces number and shot source
                 MPI_Send(&curTraceNumber, 1, MPI_LONG, dest, 0, comm);
@@ -432,19 +573,24 @@ int main(int argc, char* argv[]) {
 		}
 		else
 		{
+			unsigned int localGxMin, localGxMax, localGyMin, localGyMax;
+
 			//Receive shot source
 			MPI_Recv(&sx, 1, MPI_INT, 0, 0, comm, &status);
 			MPI_Recv(&sy, 1, MPI_INT, 0, 0, comm, &status);
+			MPI_Recv(&sz, 1, MPI_INT, 0, 0, comm, &status);
 
 
-			// assinatura propagacao
-			//Se propagacao for muito custoso deve estar depois de receber traços pois processo 0 ficará esperando
-			propagation(u_i, vModelData, Xi, Yi, Zi, dX, dY, dZ, dt, sx, sy);
+			//Receive shot source
+                        MPI_Recv(&localGxMin, 1, MPI_INT, 0, 0, comm, &status);
+			MPI_Recv(&localGxMax, 1, MPI_INT, 0, 0, comm, &status);
+                        MPI_Recv(&localGyMin, 1, MPI_INT, 0, 0, comm, &status);
+			MPI_Recv(&localGyMax, 1, MPI_INT, 0, 0, comm, &status);
 
 
 			//Receive common shot traces number and shot source
-			MPI_Recv(&localTraceNumber, 1, MPI_LONG, 0, 0, comm, &status);
-			//printf("%d recebeu num traços locais %lu\n", my_rank, localTraceNumber);
+                        MPI_Recv(&localTraceNumber, 1, MPI_LONG, 0, 0, comm, &status);
+                        //printf("%d recebeu num traços locais %lu\n", my_rank, localTraceNumber);
 
 
 			//Allocate Local Traces
@@ -468,7 +614,51 @@ int main(int argc, char* argv[]) {
 
 
 			printf("My_rank: %u\tNumberShot: %u\tLocalTraceNumber: %lu\tTraceNumber: %lu\n", my_rank, numberShot, localTraceNumber, traceNumber);
+			printf("\nMy_rank: %d\tDistribuição dos traços concluída com sucesso!\n", my_rank);
 
+
+			float *tr;                            
+                        int *trc;
+                        int ti, Ntr = 1;
+
+                        tr = (float *) malloc(Ntr*ns*sizeof(float));
+                        trc = (int *) malloc(Ntr*3*sizeof(int));
+
+                        for (ti = 0; ti < ns; ti++) {
+                                tr[ti] = source(ti*dt);
+                        }
+
+			//Converting sx, sy and sx to coordinates
+                        trc[0] = (sx-gxMin)/dX;
+                        trc[1] = (sy-gyMin)/dY;
+                        trc[2] = sz/dZ;
+
+
+/*                      trc[0] = 24;
+                        trc[1] = 24;
+                        trc[2] = 0;
+*/
+                        char fileName [20];
+                        sprintf(fileName, "direta_%d.bin", numberShot);
+
+			unsigned int localXbi, localYbi, localGxMinC, localGyMinC;
+
+			
+			localGxMinC = (localGxMin-gxMin)/dX;
+			localGyMinC = (localGyMin-gyMin)/dY;
+			localXbi = (localGxMax-localGxMin)/dX;
+			localYbi = (localGyMax-localGyMin)/dY;
+
+			// assinatura propagacao
+			//Se propagacao for muito custoso deve estar depois de receber traços pois processo 0 ficará esperando
+			//propagation(vModelData, Xi, Yi, Zi, dX, dY, dZ, tr, 200, dt, trc, Ntr, 1, fileName, 10);
+
+			//Construir modelo de velocidades local (de tamanho menor)
+			//Obter localGxMin, localGyMin,
+			//Passar Xilocal, Yilocal, Zilocal, localgxMin, localgyMin
+
+			printf("localGxMinC = %u\tlocalGyMinC = %u\tlocalXbi = %u\tlocalYbi = %u\n", localGxMinC, localGyMinC, localXbi, localYbi);
+			propagation(&vel[localGxMinC*Ybi*Zbi + localGyMinC*Zbi], Xi, Yi, Zi, localXbi, localYbi, localGxMinC, localGyMinC, dX, dY, dZ, tr, ns, dt, trc, Ntr, 1, fileName, bw);
 
 			// assinatura retropropagacao
 			backpropagation(u_r, localTraces, vModelData, Xi, Yi, Zi, dX, dY, dZ, dt, gx, gy);
@@ -500,15 +690,13 @@ int main(int argc, char* argv[]) {
 
  
    //Print data to File
-   //printFile(localTraces, localTraceNumber, TD, vModelData, vModelSize, my_rank);
+   printFile(localTraces, localTraceNumber, TD, vModelData, vModelSize, my_rank);
 
 
    //Free pointers
    if(localTraceNumber > 0)
    {
-	invBytes(&localTraces[0].sx, sizeof(int));
-	invBytes(&localTraces[localTraceNumber-1].sy, sizeof(int));
-	printf("Thread: %d\t ficou com %lu traços\tSxReal: %d\tSyReal: %d\t Sx: %d\t Sy: %d\n", my_rank, localTraceNumber, localTraces[0].sx, localTraces[localTraceNumber-1].sy, sx, sy);
+	printf("Thread: %d\t ficou com %lu traços\tSx: %d\t Sy: %d\n", my_rank, localTraceNumber, sx, sy);
    	free(localTraces);
    }
    
@@ -516,6 +704,13 @@ int main(int argc, char* argv[]) {
    {
    	free(vModelData);
    }
+
+/*
+   free(localImage);
+   free(image);
+   free(u_i); 
+   free(u_r);
+*/
 
    //End of MPI Processes
    MPI_Finalize();
@@ -555,14 +750,136 @@ void invBytes(void * valor, int nBytes) { // Inverte ordem dos bytes
 
 }
 
-
-void propagation(uint8_t* u_i, uint8_t* vModelData, int Xi, int Yi, int Zi, int dX, int dY, int dZ, int dt, int sx, int sy)
-{
-
+float source(float t) { // Função da fonte
+  return (1 - 2*M_PI*pow(M_PI*freq*t,2))*exp(-M_PI*pow(M_PI*freq*t,2));
 }
 
+void SwapPointers(float **pa, float **pb) {
+  float *pc;
+  pc  = *pa;
+  *pa = *pb;
+  *pb = pc;
+}
 
-void backpropagation(uint8_t* u_r, SuTrace* localTraces, uint8_t* vModelData, int Xi, int Yi, int Zi, int dX, int dY, int dZ, int dt, int gx, int gy)
+/* 
+ * "propagation" makes the forward of the acoustic wave
+ * vm: velocity model data
+ * Xi, Yi, Zi: velocity model dimensions n3, n2, n1
+ * dx, dy, dz: spatial resolution
+ * tr: source/seismic traces data
+ * Ti: number of samples per data source/seismic trace
+ * dt: temporal resolution
+ * trc: coordinates of source/seismic traces
+ * Ntr: number of source/seismic traces
+ * wri: write the current wavefield in a binary file at each wri timesteps. wri=0 means do not write
+ * wffn: wavefield record file name
+ * bw: border width
+ */
+void propagation(float *vel, int Xi, int Yi, int Zi, unsigned int localXbi, unsigned int localYbi, unsigned int localgxMin, unsigned int localgyMin, float dx, float dy, float dz, float *tr, unsigned short Ti, float dt, int *trc, int Ntr, int wri, char *wffn, int bw) {
+  //int xi, xbi, Xbi, yi, ybi, Ybi, zi, zbi, Zbi, ti, c, ind, indb, ntr; // auxiliary variables
+  int xbi, ybi, zbi, ti, c, ntr; // auxiliary variables
+  unsigned long Xbi, Ybi, Zbi, indb;
+  float fdx, fdy, fdz; // auxiliary variables
+  u_t u; // wavefield
+  float cx[ncx] = {-2.847222222, 1.6, -0.2, 0.025396825, -0.001785714}; // coefficients of the finite difference in x
+  float cy[ncy] = {-2.847222222, 1.6, -0.2, 0.025396825, -0.001785714}; // coefficients of the finite difference in y
+  float cz[ncz] = {-2.847222222, 1.6, -0.2, 0.025396825, -0.001785714}; // coefficients of the finite difference in z
+  FILE *wff = fopen(wffn,"wb"); // Wafield record file
+  
+  // Check the opening file
+  if (!wff) {
+    printf("Failed opening file.\n");
+    return;
+  }
+  
+  // Auxiliary variables initialization
+  Xbi = Xi + 2*bw;
+  Ybi = Yi + 2*bw;
+  Zbi = Zi + 2*bw;
+  
+  // Memory allocation
+  u.pn = (float *) malloc(Xbi*Ybi*Zbi*sizeof(float));
+  if (u.pn == NULL) {
+    printf("Memory allocation failed: u.pn.\n");
+    return;      
+  }
+  u.cur = (float *) malloc(Xbi*Ybi*Zbi*sizeof(float));
+  if (u.cur == NULL) {
+    printf("Memory allocation failed: u.cur.\n");
+    return;      
+  }
+
+ 
+  // Initial conditions
+  for (indb = 0; indb < Xbi*Ybi*Zbi; indb++) {
+    u.pn[indb] = 0;
+    u.cur[indb] = 0;
+  }
+  
+  printf("Pronto para propagar!!!\n");
+
+  // Propagation
+  for (ti = 0; ti < Ti; ti++) {
+    for (xbi = ncx; xbi < localXbi-ncx; xbi++) {
+      for (ybi = ncy; ybi < localYbi-ncy; ybi++) {
+        for (zbi = ncz; zbi < Zbi-ncz; zbi++) {
+          indb = xbi*Ybi*Zbi + ybi*Zbi + zbi;
+          fdx = cx[0]*u.cur[indb];
+          fdy = cy[0]*u.cur[indb];
+          fdz = cz[0]*u.cur[indb];
+          for (c = 1; c < ncx; c++) {
+            fdx += cx[c]*(u.cur[indb + c*Ybi*Zbi] + u.cur[indb - c*Ybi*Zbi]);
+          }
+          for (c = 1; c < ncy; c++) {
+            fdy += cy[c]*(u.cur[indb + c*Zbi] + u.cur[indb - c*Zbi]);
+          }
+          for (c = 1; c < ncz; c++) {
+            fdz += cz[c]*(u.cur[indb + c] + u.cur[indb - c]);
+          }
+          fdx *= 1/(dx*dx);
+          fdy *= 1/(dy*dy);
+          fdz *= 1/(dz*dz);
+          u.pn[indb] = 2*u.cur[indb] - u.pn[indb] + vel[indb]*(fdx + fdy + fdz);
+        }
+      }
+    }
+
+    printf("Chegou nos traço Ti = %d\n", ti);
+    printf("Os trc sao: %d\t%d\t%d\n", trc[0], trc[1], trc[2]);
+    printf("u.pn está definido entre %d e %lu\t o valor de ndb antes eh: %lu ", 0, Xbi*Ybi*Zbi, indb); 
+    // Source/seismic traces
+    for (ntr = 0; ntr < Ntr; ntr++) {
+      indb = (trc[ntr*3]+bw)*localYbi*Zbi + (trc[ntr*3+1]+bw)*Zbi + trc[ntr*3+2]+bw;
+      printf("e depois eh %lu\n", indb);
+      u.pn[indb] -= vel[indb]*tr[ntr*Ti + ti];
+    }
+
+    printf("Vai trocar ponteiros\n");
+    SwapPointers(&u.pn, &u.cur);
+    printf("Vai escrever\n");
+    // Write wavefield in a file
+    if (wri != 0) {
+      if ((ti+1)%wri == 0) {
+        for (xbi = bw; xbi < Xbi-bw; xbi++) {
+          for (ybi = bw; ybi < Ybi-bw; ybi++) {
+            if (fwrite(&u.cur[xbi*Ybi*Zbi + ybi*Zbi + bw], sizeof(float), Zi, wff) != Zi) {
+              printf("Failed writing wavefield file\n");
+              return;
+            }
+          }
+        }
+      }
+    }
+  }
+  
+  // Free memory
+  free(u.pn);
+  free(u.cur);
+  free(vel);
+  fclose(wff);
+}
+
+void backpropagation(uint8_t* u_r, SuTrace* localTraces, float* vModelData, int Xi, int Yi, int Zi, float dX, float dY, float dZ, int dt, int gx, int gy)
 {
 
 }
@@ -574,7 +891,7 @@ void imageCondition(uint8_t* image, uint8_t* u_i, uint8_t* u_r, int Xi, int Yi, 
 }
 
 
-void printFile(SuTrace* traces, unsigned long localTraceNumber, unsigned int TD, uint8_t* velocity_model_data, unsigned long vModelSize, int my_rank)
+void printFile(SuTrace* traces, unsigned long localTraceNumber, unsigned int TD, float* velocity_model_data, unsigned long vModelSize, int my_rank)
 {
    //Output Su Files
    char fileName [20];
