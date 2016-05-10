@@ -24,10 +24,10 @@
 
 #define TH 	240 	// Trace Header bytes
 
-#define ncx 5 // number of coefficients of the finite difference in x: order/2 + 1
-#define ncy 5 // number of coefficients of the finite difference in y: order/2 + 1
-#define ncz 5 // number of coefficients of the finite difference in z: order/2 + 1
-#define freq 12.0 // source frequency
+#define ncx 	5 	// number of coefficients of the finite difference in x: order/2 + 1
+#define ncy 	5 	// number of coefficients of the finite difference in y: order/2 + 1
+#define ncz 	5 	// number of coefficients of the finite difference in z: order/2 + 1
+#define freq 	12.0 	// source frequency
 
 typedef struct { // 240-byte Trace Header + Data
   int tracl; // trace sequence number within line
@@ -126,7 +126,7 @@ typedef struct { // 240-byte Trace Header + Data
 //Function declarations
 void usage(char* errorMessage, int rank);
 void printFile(SuTrace* traces, unsigned long localTraceNumber, unsigned int TD, float* velocity_model_data,  unsigned long vModelSize, int my_rank);
-void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Xi, int Yi, int Zi, float dx, float dy, float dz, float *tr, unsigned short Ti, float dt, int *trc, int Ntr, int wri, char *wffn, int bw, int my_rank, unsigned int numberShot, int startIndex);
+void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Yi, int Zi, float dx, float dy, float dz, float *tr, unsigned short Ti, float dt, int *trc, int Ntr, int wri, char *wffn, int bw, int my_rank, unsigned int numberShot);
 void backpropagation(uint8_t* u_r, SuTrace* localTraces, float* vModelData, int Xi, int Yi, int Zi, float dX, float dY, float dZ, int dt, int gx, int gy);
 void imageCondition(uint8_t* image, uint8_t* u_i, uint8_t* u_r, int Xi, int Yi, int Zi);
 void invBytes(void * valor, int nBytes);
@@ -176,13 +176,9 @@ int main(int argc, char* argv[]) {
    unsigned int gyMin;
    unsigned int gyMax;
 
-   unsigned int gx = 1;
-   unsigned int gy = 1;
-
    uint8_t* localImage;
    uint8_t* image;
-   uint8_t* u_i; 
-   uint8_t* u_r;
+
 
    //MPI start
    MPI_Init(&argc, &argv);
@@ -377,7 +373,6 @@ int main(int argc, char* argv[]) {
 	   
 	   
 	   invBytes(&ns, sizeof(unsigned short));//Invert bytes
-	   //ns = 625;
 
 
 	   //Broadcast number of samples (ns)
@@ -521,9 +516,9 @@ int main(int argc, char* argv[]) {
                 MPI_Ssend(&gyMin, 1, MPI_INT, dest, 0, comm);
                 MPI_Ssend(&gyMax, 1, MPI_INT, dest, 0, comm);
 
+
                 //Send common shot traces number and shot source
                 MPI_Ssend(&curTraceNumber, 1, MPI_LONG, dest, 0, comm);
-                //printf("%d enviou num traços locais %lu\n", my_rank, curTraceNumber);	
 		
 		
 		//Send Traces
@@ -553,11 +548,6 @@ int main(int argc, char* argv[]) {
 	MPI_Status status;	//Status of MPI communication
 			
 
-	//Allocate Wave values
-	u_i = (uint8_t*) malloc(Xi*Yi*Zi*sizeof(uint8_t));
-	u_r = (uint8_t*) malloc(Xi*Yi*Zi*sizeof(uint8_t));
-	
-
 	//Broadcast number of samples (ns)
 	MPI_Bcast(&ns, 1, MPI_SHORT, 0, comm);       
 	TD = ns*sizeof(float);
@@ -566,11 +556,9 @@ int main(int argc, char* argv[]) {
 	while(traceNumber < ntt && numberShot < shotLimit)
 	{
 
-		
 		if(my_rank != (numberShot % (comm_sz-1)) + 1)
 		{
 			MPI_Bcast(&traceNumber, 1, MPI_LONG, 0, comm);
-			printf("My_rank = %u\tNumberShot = %u\tvel[0] = %.2f\n", my_rank, numberShot, vel[2]);		
 		}
 		else
 		{
@@ -591,7 +579,6 @@ int main(int argc, char* argv[]) {
 
 			//Receive common shot traces number and shot source
                         MPI_Recv(&localTraceNumber, 1, MPI_LONG, 0, 0, comm, &status);
-                        //printf("%d recebeu num traços locais %lu\n", my_rank, localTraceNumber);
 
 
 			//Allocate Local Traces
@@ -621,6 +608,8 @@ int main(int argc, char* argv[]) {
 			float *tr;                            
                         int *trc;
                         int ti, Ntr = 1;
+			unsigned int localXbi, localYbi, localGxMinC, localGyMinC;
+
 
                         tr = (float *) malloc(Ntr*ns*sizeof(float));
                         trc = (int *) malloc(Ntr*3*sizeof(int));
@@ -635,14 +624,8 @@ int main(int argc, char* argv[]) {
                         trc[2] = sz/dZ;
 
 
-/*                      trc[0] = 24;
-                        trc[1] = 24;
-                        trc[2] = 0;
-*/
                         char fileName [20];
                         sprintf(fileName, "direta_%d.bin", numberShot);
-
-			unsigned int localXbi, localYbi, localGxMinC, localGyMinC;
 
 			
 			localGxMinC = (localGxMin-gxMin)/dX;
@@ -658,20 +641,18 @@ int main(int argc, char* argv[]) {
 			//Obter localGxMin, localGyMin,
 			//Passar Xilocal, Yilocal, Zilocal, localgxMin, localgyMin
 
-			printf("localGxMinC = %u\tlocalGyMinC = %u\tlocalXbi = %u\tlocalYbi = %u\tlocalGxMinC*Ybi*Zbi + localGyMinC*Zbi = %lu\n", localGxMinC, localGyMinC, localXbi, localYbi, localGxMinC*Ybi*Zbi + localGyMinC*Zbi);
-			printf("My_rank: %u\tNumberShot: %u\tLocalXbi: %u\tLocalYbi: %u\n", my_rank, numberShot, localXbi, localYbi);
+			printf("My_rank: %u\tNumberShot: %u\tLocalXbi: %u\tLocalYbi: %u\tlocalGxMinC = %u\tlocalGyMinC = %u\n", my_rank, numberShot, localXbi, localYbi, localGxMinC, localGyMinC);
 			fflush(stdout);
 
-			int startIndex = (localGxMinC+bw)*Ybi*Zbi + (localGyMinC+bw)*Zbi;
-			
-			propagation( &(vel[(localGxMinC+bw)*Ybi*Zbi + (localGyMinC+bw)*Zbi]), localXbi, localYbi, Xi, Yi, Zi, dX, dY, dZ, tr, ns, dt, trc, Ntr, 1, fileName, bw, my_rank, numberShot, startIndex);
+
+			propagation( &(vel[(localGxMinC+bw)*Ybi*Zbi + (localGyMinC+bw)*Zbi]), localXbi, localYbi, Yi, Zi, dX, dY, dZ, tr, ns, dt, trc, Ntr, 1, fileName, bw, my_rank, numberShot);
 
 			// assinatura retropropagacao
-			backpropagation(u_r, localTraces, vModelData, Xi, Yi, Zi, dX, dY, dZ, dt, gx, gy);
+			//backpropagation(u_r, localTraces, vModelData, Xi, Yi, Zi, dX, dY, dZ, dt, gx, gy);
 
 
 			// assinatura correlacao cruzada
-			imageCondition(localImage, u_i, u_r, Xi, Yi, Zi);
+			//imageCondition(localImage, u_i, u_r, Xi, Yi, Zi);
 
 		}
 		numberShot++;
@@ -782,9 +763,9 @@ void SwapPointers(float **pa, float **pb) {
  * wffn: wavefield record file name
  * bw: border width
  */
-void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Xi, int Yi, int Zi, float dx, float dy, float dz, float *tr, unsigned short Ti, float dt, int *trc, int Ntr, int wri, char *wffn, int bw, int my_rank, unsigned int numberShot, int startIndex) {
+void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Yi, int Zi, float dx, float dy, float dz, float *tr, unsigned short Ti, float dt, int *trc, int Ntr, int wri, char *wffn, int bw, int my_rank, unsigned int numberShot) {
   int xbi, ybi, zbi, ti, c, ntr; // auxiliary variables
-  unsigned long localXbi, localYbi, Xbi, Ybi, Zbi, indb, ivb;
+  unsigned long localXbi, localYbi, Ybi, Zbi, indb, ivb;
   float fdx, fdy, fdz; // auxiliary variables
   u_t u; // wavefield
   float cx[ncx] = {-2.847222222, 1.6, -0.2, 0.025396825, -0.001785714}; // coefficients of the finite difference in x
@@ -801,7 +782,6 @@ void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Xi,
   // Auxiliary variables initialization
   localXbi = localXi + 2*bw;
   localYbi = localYi + 2*bw;
-  Xbi = Xi + 2*bw;
   Ybi = Yi + 2*bw;
   Zbi = Zi + 2*bw;
   
@@ -823,6 +803,9 @@ void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Xi,
     u.pn[indb] = 0;
     u.cur[indb] = 0;
   }
+
+  printf("Rank: %d\tComputando tiro = %u\n", my_rank, numberShot);
+  fflush(stdout);
  
   // Propagation
   for (ti = 0; ti < Ti; ti++) {
@@ -855,8 +838,6 @@ void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Xi,
       }
     }
 
-    printf("Rank: %d\tNumberShot: %u\tComputou traço Ti = %d\n", my_rank, numberShot, ti);
-    fflush(stdout);
     // Source/seismic traces
     for (ntr = 0; ntr < Ntr; ntr++) {
       indb = (trc[ntr*3]+bw)*localYbi*Zbi + (trc[ntr*3+1]+bw)*Zbi + trc[ntr*3+2]+bw;
