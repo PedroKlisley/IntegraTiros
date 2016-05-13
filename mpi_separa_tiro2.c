@@ -266,7 +266,7 @@ int main(int argc, char* argv[]) {
 
   unsigned long Xbi, Ybi, Zbi, indb, ind;
   int xi, xbi, yi, ybi, zi, zbi; // auxiliary variables
-  unsigned int bw = 10;
+  unsigned int bw = 50;
   float *vel, *vel2; // auxiliary variables
 
   // Auxiliary variables initialization
@@ -640,7 +640,7 @@ int main(int argc, char* argv[]) {
 			float *tr;                            
                         int *trc;
                         int ti, Ntr = 1;
-			unsigned int localXbi, localYbi, localGxMinC, localGyMinC;
+			unsigned int localXi, localYi, localGxMinC, localGyMinC;
 
 
                         tr = (float *) malloc(Ntr*ns*sizeof(float));
@@ -648,6 +648,7 @@ int main(int argc, char* argv[]) {
 
                         for (ti = 0; ti < ns; ti++) {
                                 tr[ti] = source(ti*dt);
+				//printf("tr[%d] = %.3f\n", ti, tr[ti]);
                         }
 
 			//Converting sx, sy and sx to coordinates
@@ -662,8 +663,8 @@ int main(int argc, char* argv[]) {
 			
 			localGxMinC = (localGxMin-gxMin)/dX;
 			localGyMinC = (localGyMin-gyMin)/dY;
-			localXbi = (localGxMax-localGxMin)/dX;
-			localYbi = (localGyMax-localGyMin)/dY;
+			localXi = (localGxMax-localGxMin)/dX + 1;
+			localYi = (localGyMax-localGyMin)/dY + 1;
 
 			// assinatura propagacao
 			//Se propagacao for muito custoso deve estar depois de receber traços pois processo 0 ficará esperando
@@ -673,11 +674,12 @@ int main(int argc, char* argv[]) {
 			//Obter localGxMin, localGyMin,
 			//Passar Xilocal, Yilocal, Zilocal, localgxMin, localgyMin
 
-			printf("My_rank: %u\tNumberShot: %u\tLocalXbi: %u\tLocalYbi: %u\tlocalGxMinC = %u\tlocalGyMinC = %u\n", my_rank, numberShot, localXbi, localYbi, localGxMinC, localGyMinC);
+			printf("My_rank: %u\tNumberShot: %u\tLocalXbi: %u\tLocalYbi: %u\tlocalGxMinC = %u\tlocalGyMinC = %u\n", my_rank, numberShot, localXi, localYi, localGxMinC, localGyMinC);
 			fflush(stdout);
 
+			printf("trc[0] = %d\ttrc[1] = %d\ttrc[2] = %d\n", trc[0], trc[1], trc[2]);
 
-			propagation( &(vel[localGxMinC*Ybi*Zbi + localGyMinC*Zbi]), localXbi, localYbi, Yi, Zi, dX, dY, dZ, tr, ns, dt, trc, Ntr, 150, fileName, bw, my_rank, numberShot);
+			propagation( &(vel[localGxMinC*Ybi*Zbi + localGyMinC*Zbi]), localXi, localYi, Yi, Zi, dX, dY, dZ, tr, ns, dt, trc, Ntr, 10, fileName, bw, my_rank, numberShot);
 
 			// assinatura retropropagacao
 			//backpropagation(u_r, localTraces, vModelData, Xi, Yi, Zi, dX, dY, dZ, dt, gx, gy);
@@ -800,9 +802,14 @@ void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Yi,
   unsigned long localXbi, localYbi, Ybi, Zbi, indb, ivb;
   float fdx, fdy, fdz; // auxiliary variables
   u_t u; // wavefield
-  float cx[ncx] = {-2.847222222, 1.6, -0.2, 0.025396825, -0.001785714}; // coefficients of the finite difference in x
-  float cy[ncy] = {-2.847222222, 1.6, -0.2, 0.025396825, -0.001785714}; // coefficients of the finite difference in y
-  float cz[ncz] = {-2.847222222, 1.6, -0.2, 0.025396825, -0.001785714}; // coefficients of the finite difference in z
+  //float cx[ncx] = {-2.847222222, 1.6, -0.2, 0.025396825, -0.001785714}; // coefficients of the finite difference in x
+  //float cy[ncy] = {-2.847222222, 1.6, -0.2, 0.025396825, -0.001785714}; // coefficients of the finite difference in y
+  //float cz[ncz] = {-2.847222222, 1.6, -0.2, 0.025396825, -0.001785714}; // coefficients of the finite difference in z
+
+  float cx[ncx] = {-205.0/72.0, 1.6, -0.2, 8.0/315.0, -1/560.0}; // coefficients of the finite difference in x
+  float cy[ncy] = {-205.0/72.0, 1.6, -0.2, 8.0/315.0, -1/560.0}; // coefficients of the finite difference in y
+  float cz[ncz] = {-205.0/72.0, 1.6, -0.2, 8.0/315.0, -1/560.0}; // coefficients of the finite difference in z
+
   FILE *wff = fopen(wffn,"wb"); // Wafield record file
   
   // Check the opening file
@@ -818,29 +825,29 @@ void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Yi,
   Zbi = Zi + 2*bw;
   
   // Memory allocation
-  u.pn = (float *) malloc(localXbi*localYbi*Zbi*sizeof(float));
+  u.pn = (float *) calloc(localXbi*localYbi*Zbi,sizeof(float));
   if (u.pn == NULL) {
     printf("Memory allocation failed: u.pn.\n");
     return;      
   }
-  u.cur = (float *) malloc(localXbi*localYbi*Zbi*sizeof(float));
+  u.cur = (float *) calloc(localXbi*localYbi*Zbi,sizeof(float));
   if (u.cur == NULL) {
     printf("Memory allocation failed: u.cur.\n");
     return;      
   }
 
- 
+  printf("u Size: %lu\n", localXbi*localYbi*Zbi);
   // Initial conditions
-  for (indb = 0; indb < localXbi*localYbi*Zbi; indb++) {
+  /*for (indb = 0; indb < localXbi*localYbi*Zbi; indb++) {
     u.pn[indb] = 0;
     u.cur[indb] = 0;
-  }
+  }*/
 
   printf("Rank: %d\tComputando tiro = %u\n", my_rank, numberShot);
   fflush(stdout);
  
   // Propagation
-  for (ti = 0; ti < Ti; ti++) {
+  for (ti = 0; ti < 60; ti++) {
     for (xbi = ncx; xbi < localXbi-ncx; xbi++) {
       for (ybi = ncy; ybi < localYbi-ncy; ybi++) {
         for (zbi = ncz; zbi < Zbi-ncz; zbi++) {
@@ -866,6 +873,10 @@ void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Yi,
           
 	  ivb = xbi*Ybi*Zbi + ybi*Zbi + zbi;
           u.pn[indb] = 2*u.cur[indb] - u.pn[indb] + vel[ivb]*(fdx + fdy + fdz);	 
+	  if(xbi == localXbi/2 && ybi == localYbi/2 && zbi == Zbi/2 && ti < 20)
+	  {
+		//printf("Ti: %d\tu.cur[%lu] = %.3f\tu.pn[%lu] = %.3f\n", ti, indb, u.cur[indb], indb, u.pn[indb]);
+	  }
         }
       }
     }
@@ -877,6 +888,7 @@ void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Yi,
       indb = (trc[ntr*3]+bw)*localYbi*Zbi + (trc[ntr*3+1]+bw)*Zbi + trc[ntr*3+2]+bw;
       ivb = (trc[ntr*3]+bw)*Ybi*Zbi + (trc[ntr*3+1]+bw)*Zbi + (trc[ntr*3+2]+bw);
       u.pn[indb] -= vel[ivb]*tr[ntr*Ti + ti];
+      printf("Ti: %d\tu.cur[%lu] = %.3f\tu.pn[%lu] = %.3f\n", ti, indb, u.cur[indb], indb, u.pn[indb]);
     }
 
     SwapPointers(&u.pn, &u.cur);
