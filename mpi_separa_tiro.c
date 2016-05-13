@@ -125,7 +125,7 @@ typedef struct { // 240-byte Trace Header + Data
 
 //Function declarations
 void usage(char* errorMessage, int rank);
-void printFile(SuTrace* traces, unsigned long localTraceNumber, unsigned int TD, float* velocity_model_data,  unsigned long vModelSize, int my_rank);
+void printFile(SuTrace* traces, unsigned long localTraceNumber, unsigned int TD, float* vel,  unsigned long vModelSize, int my_rank);
 void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Yi, int Zi, float dx, float dy, float dz, float *tr, unsigned short Ti, float dt, int *trc, int Ntr, int wri, char *wffn, int bw, int my_rank, unsigned int numberShot);
 void backpropagation(uint8_t* u_r, SuTrace* localTraces, float* vModelData, int Xi, int Yi, int Zi, float dX, float dY, float dZ, int dt, int gx, int gy);
 void imageCondition(uint8_t* image, uint8_t* u_i, uint8_t* u_r, int Xi, int Yi, int Zi);
@@ -169,7 +169,7 @@ int main(int argc, char* argv[]) {
    float dX;
    float dY;
    float dZ;
-   int dt;
+   float dt;
 
    unsigned int gxMin;
    unsigned int gxMax;
@@ -197,10 +197,10 @@ int main(int argc, char* argv[]) {
    Xi = atoi(argv[2]);
    Yi = atoi(argv[3]);
    Zi = atoi(argv[4]);
-   dX = atoi(argv[5]);
-   dY = atoi(argv[6]);
-   dZ = atoi(argv[7]);
-   dt = atoi(argv[8]);
+   dX = atof(argv[5]);
+   dY = atof(argv[6]);
+   dZ = atof(argv[7]);
+   dt = atof(argv[8]);
    
    gxMin = atoi(argv[9]);
    gxMax = atoi(argv[10]);
