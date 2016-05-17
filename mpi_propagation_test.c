@@ -130,7 +130,7 @@ typedef struct { // 240-byte Trace Header + Data
 //Function declarations
 void usage(char* errorMessage, int rank);
 void printFile(SuTrace* traces, unsigned long localTraceNumber, unsigned int TD, float* velocity_model_data,  unsigned long vModelSize, int my_rank);
-void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Yi, int Zi, float dx, float dy, float dz, float *tr, unsigned short Ti, float dt, int *trc, int Ntr, int wri, char *wffn, int bw, int my_rank, unsigned int shotNumber);
+void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Yi, int Zi, float dx, float dy, float dz, float *tr, unsigned short Ti, float dt, int *trc, int Ntr, int wri, char *wffn, int bw, int my_rank, unsigned int shotNumber, short pMode);
 void backpropagation(float *vel, unsigned int localXi, unsigned int localYi, int Yi, int Zi, float dx, float dy, float dz, float *tr, unsigned short Ti, float dt, int *trc, int Ntr, int wri, char *wffn, int bw, int my_rank, unsigned int shotNumber);
 void imageCondition(uint8_t* image, uint8_t* u_i, uint8_t* u_r, int Xi, int Yi, int Zi);
 void invBytes(void * valor, int nBytes);
@@ -138,7 +138,7 @@ float source(float t);
 float minDs(float dx, float dy, float dz);
 float maxDs(float dx, float dy, float dz);
 void readVelData(float *vel, float *vMin, float *vMax, float *sdt, float *rdt, unsigned short *sTi, double* divisor, unsigned short ns, int Xi, int Yi, int Zi, unsigned long Xbi, unsigned long Ybi, unsigned long Zbi, const char* velFileName, unsigned int bw, float dX, float dY, float dZ, float dt);
-void getComShotTraces(FILE* suFile, SuTrace* traces, float* tr, int* trc, unsigned long* traceNumber, unsigned long* localTraceNumber, unsigned int* localXi, unsigned int* localYi, unsigned int* localGxMinC, unsigned int* localGyMinC, unsigned int gxMin, unsigned int gyMin, unsigned long ntt, unsigned short ns, unsigned int TD, float dX, float dY, float dZ, float dt);
+void getComShotTraces(FILE* suFile, SuTrace* traces, float* tracesData, int* tracesC, float* tr, int* trc, unsigned long* traceNumber, unsigned long* localTraceNumber, unsigned int* localXi, unsigned int* localYi, unsigned int* localGxMinC, unsigned int* localGyMinC, unsigned int gxMin, unsigned int gyMin, unsigned long ntt, unsigned short ns, unsigned int TD, float dX, float dY, float dZ, float dt);
 
 int main(int argc, char* argv[]) {
     
@@ -199,7 +199,7 @@ int main(int argc, char* argv[]) {
     //unsigned int  dest;		//Destination process index
     FILE *suFile;			//SU File
     SuTrace* traces;			//SU Traces
-    SuTrace* iTraces;			//SU Traces interpolated
+    float* iTracesData;			//SU Traces interpolated
     float *tr;                           //Traces data
     int *trc;				//Traces data coordinate (row, column, depth)
     int ti; 				//Index counter of propagation wave time
@@ -223,7 +223,8 @@ int main(int argc, char* argv[]) {
     int rest;
     int localCeilShotNumber;
     unsigned int localFirstShotNumber; 
-    unsigned int iMax;
+    float* tracesData;
+    int* tracesC;
     
     //uint8_t* localImage;
     //uint8_t* image;
@@ -268,7 +269,7 @@ int main(int argc, char* argv[]) {
     divisor = 1;
     vMin = FLT_MAX;
     vMax = 0;
-    shotLimit = 2;
+    shotLimit = 1;
     bw = 50;
     Xbi = Xi + 2*bw;
     Ybi = Yi + 2*bw;
@@ -459,24 +460,28 @@ int main(int argc, char* argv[]) {
     {
         traces[i].data = (float *) malloc(TD);
     }
-    
-    
+
+    Ntr = 1;  //Number of traces (sources)
+
+    //Allocate traces coordinates and samples of traces
+    trc = (int *) malloc(Ntr*3*sizeof(int));
+    tr = (float *) malloc(Ntr*ns*sizeof(float));
+    tracesC = (int *) malloc(ntssMax*3*sizeof(int)); 
+    tracesData = (float *) malloc(ntssMax*ns*sizeof(float));
+
     //Read local shots
     while(traceNumber < ntt && shotNumber < localShotNumberLimit)
-    {
-        Ntr = 1;  //Number of traces (sources)
-        
-        //Allocate traces coordinates and samples of traces
-        trc = (int *) malloc(Ntr*3*sizeof(int));
-        tr = (float *) malloc(Ntr*ns*sizeof(float));
-	//tracesC = (int *) malloc(NtssMax*3*sizeof(int)); 
-        
+    {             
         //Get Commom Shot Traces
-        getComShotTraces(suFile, traces, tr, trc, &traceNumber, &curTraceNumber, &localXi, &localYi, &localGxMinC, &localGyMinC, gxMin, gyMin, ntt, ns, TD, dX, dY, dZ, dt);
-        
+        getComShotTraces(suFile, traces, tracesData, tracesC, tr, trc, &traceNumber, &curTraceNumber, &localXi, &localYi, &localGxMinC, &localGyMinC, gxMin, gyMin, ntt, ns, TD, dX, dY, dZ, dt);        
         
         printf("My_rank: %u\tNumberShot: %u\tLocalXi: %u\tLocalYi: %u\tlocalGxMinC = %u\tlocalGyMinC = %u\n", my_rank, shotNumber, localXi, localYi, localGxMinC, localGyMinC);
-        printf("trc[0] = %d\ttrc[1] = %d\ttrc[2] = %d\n", trc[0], trc[1], trc[2]);
+        printf("trc[0] = %d\ttrc[1] = %d\ttrc[2] = %d\t ns = %d\n", trc[0], trc[1], trc[2], ns);
+        for (ti = 0; ti < ns; ti++) {
+        	//tr[ti] = source(ti*dt);
+        	printf("tr[%d] = %.3f\n", ti, tr[ti]);
+        }
+
         fflush(stdout);
         
         
@@ -501,77 +506,107 @@ int main(int argc, char* argv[]) {
         if(dt <= rdt)
         {
             printf("Passou no teste temporal 2\n");
-            propagation( &(vel[localGxMinC*Ybi*Zbi + localGyMinC*Zbi]), localXi, localYi, Yi, Zi, dX, dY, dZ, tr, ns, dt, trc, Ntr, 100, fileName, bw, my_rank, shotNumber);
-            free(tr);
+            propagation( &(vel[localGxMinC*Ybi*Zbi + localGyMinC*Zbi]), localXi, localYi, Yi, Zi, dX, dY, dZ, tr, ns, dt, trc, Ntr, 100, fileName, bw, my_rank, shotNumber, 1);
+	    sprintf(fileName, "retroP_%d.bin", shotNumber);
+            propagation( &(vel[localGxMinC*Ybi*Zbi + localGyMinC*Zbi]), localXi, localYi, Yi, Zi, dX, dY, dZ, tracesData, ns, dt, tracesC, curTraceNumber, 100, fileName, bw, my_rank, shotNumber, -1);
+
         }
         else
         {
             
             //Allocate corrected pointers
             str = (float *) malloc(Ntr*sTi*sizeof(float));
-            /*iTraces = (SuTrace*) malloc(curTraceNumber*sizeof(SuTrace));
-             *		for (i = 0; i < curTraceNumber; i++)
-             *   		{
-             *			iTraces[i].data = (float *) malloc(divisor*TD);
-        }// */
-            
+            iTracesData = (float *) malloc(curTraceNumber*sTi*sizeof(float));
+        
+            int trIndex;
+ 
             //Interpolate 
-            for (ti = 0; ti < sTi; ti++) 
+            for (ti = 0; ti < sTi-divisor; ti++) 
             {
                 if(ti % (int) divisor != 0)
                 {
-                    fIndex = (int) divisor*floor((double) ti / divisor);
-                    cIndex = (int) divisor*ceil((double) ti / divisor);
-                    fCoef = ((float) (ti-fIndex)) / divisor ;
-                    cCoef = ((float) (cIndex-ti)) / divisor ;
+                    fIndex = (int) floor((double) ti / divisor);
+                    cIndex = (int) ceil((double) ti / divisor);
+                    fCoef = ((float) (ti-fIndex*divisor)) / divisor ; //ti = 5 fI:1 cI:2
+                    cCoef = 1.0 - fCoef ;
                     str[ti] = fCoef*tr[fIndex]+cCoef*tr[cIndex];
-                    /*for (i = 0; i < curTraceNumber; i++)
-                     *                		{	
-                     *					iTraces[i].data[ti] = fCoef*traces[i].data[fIndex]+cCoef*traces[i].data[cIndex];
-                }*/
+		    //printf("ti = %d Chegou Antes de iTracesData\n", ti);		    
+                    for (i = 0; i < curTraceNumber; i++)
+                    {	
+                    	iTracesData[(int) ns*i+ti] = fCoef*tracesData[(int) ns*i+fIndex]+cCoef*tracesData[(int) ns*i+cIndex];
+                    }
+    		    //printf("ti = %d Passou de iTracesData\n", ti);		    
                     if(my_rank == 0)
                     {
-                        //printf("ti: %d\tdiv: %.2f\tfI: %d\tcI: %d\t fCoef: %.2f\t cCoef: %.2f\ttr[fI]: %.3f\ttr[cI]: %.3f\tstr[t]: %.3f\n", ti, divisor, fIndex, cIndex, fCoef, cCoef, tr[fIndex], tr[cIndex], str[ti]);
+                        printf("ti: %d\tdiv: %.2f\tfI: %d\tcI: %d\t fCoef: %.2f\t cCoef: %.2f\ttr[fI]: %.3f\ttr[cI]: %.3f\tstr[t]: %.3f\n", ti, divisor, fIndex, cIndex, fCoef, cCoef, tr[fIndex], tr[cIndex], str[ti]);
                     }
                 }
                 else
                 {
-                    str[ti] = tr[ti];
+		    trIndex = ti/divisor;
+                    str[ti] = tr[trIndex];
+		    if(my_rank == 0)
+                    {
+                        printf("tr[%d]: %.3f\tstr[%d]: %.3f\n", trIndex, tr[trIndex], ti, str[ti]);
+                    }
+		    for (i = 0; i < curTraceNumber; i++)
+                    {
+		    	iTracesData[(int) ns*i+ti] = tracesData[(int) ns*i+trIndex];
+		    }
                 }
             }
-            
-            //Free default pointers
-            /*for (i = 0; i < ntssMax; i++)
-             *   		{
-             *			free(traces[i].data);
-        }
-        free(traces);
-        free(tr);*/
-            
-            iMax = 0;
+
+            trIndex = (sTi-divisor)/divisor;	
+	    //Repeat last trace
+	    for (ti = sTi-divisor; ti < sTi; ti++)
+            {
+
+		str[ti] = tr[trIndex];
+		for (i = 0; i < curTraceNumber; i++)
+                {
+			iTracesData[(int) ns*i+ti] = tracesData[(int) ns*i+trIndex];
+		}
+
+		if(my_rank == 0)
+                {
+                	printf("str[%d]: %.3f\ttr[%d]: %.3f\n", ti, str[ti], trIndex, tr[trIndex]);
+                }
+	    }
+
             printf("Nao passou no teste temporal 2\n");		
-            propagation( &(vel[localGxMinC*Ybi*Zbi + localGyMinC*Zbi]), localXi, localYi, Yi, Zi, dX, dY, dZ, str, sTi, sdt, trc, Ntr, 100, fileName, bw, my_rank, shotNumber);
-            
+            propagation( &(vel[localGxMinC*Ybi*Zbi + localGyMinC*Zbi]), localXi, localYi, Yi, Zi, dX, dY, dZ, str, sTi, sdt, trc, Ntr, 100, fileName, bw, my_rank, shotNumber, 1);
+	    
+	    //Update propagation filename
+	    sprintf(fileName, "retroP_%d.bin", shotNumber);
+            propagation( &(vel[localGxMinC*Ybi*Zbi + localGyMinC*Zbi]), localXi, localYi, Yi, Zi, dX, dY, dZ, iTracesData, sTi, sdt, tracesC, curTraceNumber, 100, fileName, bw, my_rank, shotNumber, -1);
+
             
             //Free corrected pointers
-            /*for (i = 0; i < curTraceNumber; i++)
-             *   		{
-             *			free(iTraces[i].data);
-        }
-        free(iTraces);*/
+	    free(iTracesData);
             free(str);	
             
             //exit(0);
         }//*/
         
         shotNumber++;//Update number of shot
-        free(trc);
-        
+
     }
     
     printf("\nMy_rank: %d\tCalculo dos traços concluído com sucesso!\n", my_rank);
+
     fclose(suFile);
-    
+    free(trc);
+    free(tr);
+    free(tracesData);
+    free(tracesC);
+    for (i = 0; i < ntssMax; i++)
+    {
+    	free(traces[i].data);
+    }
+    free(traces);
+    //Free pointers
+    free(vel);
+
     /*****  End of Get Traces *****/
     
     
@@ -583,10 +618,7 @@ int main(int argc, char* argv[]) {
     //Print data to File
     //printFile(traces, localTraceNumber, TD, vel, Xbi*Ybi*Zbi, my_rank);
     
-    
-    //Free pointers
-    free(traces);
-    free(vel);
+   
     
     /*
      *   free(localImage);
@@ -712,7 +744,7 @@ void SwapPointers(float **pa, float **pb) {
  * wffn: wavefield record file name
  * bw: border width
  */
-void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Yi, int Zi, float dx, float dy, float dz, float *tr, unsigned short Ti, float dt, int *trc, int Ntr, int wri, char *wffn, int bw, int my_rank, unsigned int shotNumber) {
+void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Yi, int Zi, float dx, float dy, float dz, float *tr, unsigned short Ti, float dt, int *trc, int Ntr, int wri, char *wffn, int bw, int my_rank, unsigned int shotNumber, short pMode) {
     int xbi, ybi, zbi, ti, c, ntr; // auxiliary variables
     unsigned long localXbi, localYbi, Ybi, Zbi, indb, ivb;
     float fdx, fdy, fdz; // auxiliary variables
@@ -758,9 +790,27 @@ void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Yi,
     printf("Ti = %d\n", Ti);
     fflush(stdout);
     
-    //float velMax2 = 0;
-    // Propagation
-    for (ti = 0; ti < Ti; ti++) {
+    int inc, sign;
+    int firstI, lastI;    
+
+    if(pMode >= 0)
+    {//Propagation
+	firstI = 0;
+	lastI = Ti;
+	sign = 1;
+	inc = 1;
+    }
+    else
+    {//Backpropagation
+ 	firstI = Ti-1;
+	lastI = 0;
+	sign = -1;
+ 	inc = -1;
+    }
+ 
+    // Propagate
+    for (ti = firstI; sign*ti < lastI; ti += inc) {
+    //for (ti = 0; ti < Ti; ti++) {
         for (xbi = ncx-1; xbi < localXbi-ncx+1; xbi++) {
             for (ybi = ncy-1; ybi < localYbi-ncy+1; ybi++) {
                 for (zbi = ncz-1; zbi < Zbi-ncz+1; zbi++) {
@@ -784,27 +834,8 @@ void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Yi,
                     fdy *= 1/(dy*dy);
                     fdz *= 1/(dz*dz);
                     
-                    ivb = xbi*Ybi*Zbi + ybi*Zbi + zbi;
-                    /*if(ti == 0 && velMax2 < vel[ivb])
-                     *	  {
-                     *		velMax2 = vel[ivb];
-                     *		iMax = ivb;
-                }*/
-                    
+                    ivb = xbi*Ybi*Zbi + ybi*Zbi + zbi;                    
                     u.pn[indb] = 2*u.cur[indb] - u.pn[indb] + vel[ivb]*(fdx + fdy + fdz);	 
-                    //if(u.pn[indb] != 0 && ti < 3)
-                    //{
-                    //	printf("Ti: %d\tu.pn[%lu] = %.3f\n", ti, indb, u.pn[indb]);
-                    //}
-                    /*if(zbi == bw && xbi == 57 && ybi == 63 && ti < 3)
-                    {
-                        u.pn[indb] = 100;
-                    }*/
-                    //if(indb == (trc[0]+bw)*localYbi*Zbi + (trc[1]+bw)*Zbi + trc[2]+bw)
-                    /*if(indb == iMax)
-                     *	  {
-                     *	  	//printf("fdx: %.3f\tfdy: %.3f\tfdz: %.3f\tvel[%lu] = %.3f\n", fdx, fdy, fdz, ivb, vel[ivb]);
-                }*/
                 }
             }
         }
@@ -814,38 +845,47 @@ void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Yi,
         // Source/seismic traces
         // Corrigir trc, ivb
         // Verificar indices
-         for (ntr = 0; ntr < Ntr; ntr++) 
-	 {
-                indb = (trc[ntr*3]+bw)*localYbi*Zbi + (trc[ntr*3+1]+bw)*Zbi + trc[ntr*3+2]+bw;
+        for (ntr = 0; ntr < Ntr; ntr++) 
+	{
+        	indb = (trc[ntr*3]+bw)*localYbi*Zbi + (trc[ntr*3+1]+bw)*Zbi + trc[ntr*3+2]+bw;
                 ivb = (trc[ntr*3]+bw)*Ybi*Zbi + (trc[ntr*3+1]+bw)*Zbi + (trc[ntr*3+2]+bw);
                 //printf("Antes  Sub Rank: %d\tTi = %d\tti = %d\tu.pn[%lu] = %.3f\n", my_rank, Ti, ti, indb, u.pn[indb]);
                 u.pn[indb] -= vel[ivb]*tr[ntr*Ti + ti];
-                printf("Rank: %d\tTi = %d\tti = %d\tu.pn[%lu] = %.3f\n", my_rank, Ti, ti, indb, u.pn[indb]);
-    	 }// */
+                printf("Rank: %d\tpMode = %d\tTi = %d\tti = %d\tu.pn[%lu] = %.3f\n", my_rank, pMode, Ti, ti, indb, u.pn[indb]);
+	}// */
     
     
-    //printf("Rank: %d\tti = %d\tu.pn[%lu] = %.3f\n", my_rank, ti, indb, u.pn[indb]);
-    
-    SwapPointers(&u.pn, &u.cur);
-    
-    // Write wavefield in a file
-    if (wri != 0) {
-        if ((ti+1)%wri == 0 || (wri > 0 && ti == 10)) {
-            sprintf(fileName, "./pDireta/direta_%d_%d.bin", shotNumber,ti);	
-            wff2 = fopen(fileName,"wb"); 
-            
-            for (xbi = bw; xbi < localXbi-bw; xbi++) {
-                for (ybi = bw; ybi < localYbi-bw; ybi++) {
-                    //printf("u atual: %.3f\n", u.cur[xbi*localYbi*Zbi + ybi*Zbi + bw]); 
-                    if (fwrite(&u.cur[xbi*localYbi*Zbi + ybi*Zbi + bw], sizeof(float), Zi, wff2) != Zi) {
-                        printf("Failed writing wavefield file\n");
-                        return;
-                    }
-                }
-            }
-            fclose(wff2);
-        }
-    }
+	//printf("Rank: %d\tti = %d\tu.pn[%lu] = %.3f\n", my_rank, ti, indb, u.pn[indb]);
+
+	SwapPointers(&u.pn, &u.cur);
+
+	// Write wavefield in a file
+	if (wri != 0) {
+		if ((ti+1)%wri == 0 || (wri > 0 && ti == 10)) {
+		    if(pMode >= 0)
+		    {		
+		    	sprintf(fileName, "./pDireta/direta_%d_%d.bin", shotNumber,ti);	
+		    }
+		    else
+		    {
+			sprintf(fileName, "./pDireta/retroP_%d_%d.bin", shotNumber,ti);	
+		    }
+		    
+		    wff2 = fopen(fileName,"wb"); 
+		    
+		    for (xbi = bw; xbi < localXbi-bw; xbi++) {
+			for (ybi = bw; ybi < localYbi-bw; ybi++) {
+			    //printf("u atual: %.3f\n", u.cur[xbi*localYbi*Zbi + ybi*Zbi + bw]); 
+			    if (fwrite(&u.cur[xbi*localYbi*Zbi + ybi*Zbi + bw], sizeof(float), Zi, wff2) != Zi) {
+				printf("Failed writing wavefield file\n");
+				return;
+			    }
+			}
+		    }
+
+		    fclose(wff2);
+		}
+	}
     }
     
     // Free memory
@@ -963,9 +1003,8 @@ void readVelData(float *vel, float *vMin, float *vMax, float *sdt, float *rdt, u
         }
     }    
 } 
-    
-    
-void getComShotTraces(FILE* suFile, SuTrace* traces, float* tr, int* trc, unsigned long* traceNumber, unsigned long* localTraceNumber, unsigned int* localXi, unsigned int* localYi, unsigned int* localGxMinC, unsigned int* localGyMinC, unsigned int gxMin, unsigned int gyMin, unsigned long ntt, unsigned short ns, unsigned int TD, float dX, float dY, float dZ, float dt)
+       
+void getComShotTraces(FILE* suFile, SuTrace* traces, float* tracesData, int* tracesC, float* tr, int* trc, unsigned long* traceNumber, unsigned long* localTraceNumber, unsigned int* localXi, unsigned int* localYi, unsigned int* localGxMinC, unsigned int* localGyMinC, unsigned int gxMin, unsigned int gyMin, unsigned long ntt, unsigned short ns, unsigned int TD, float dX, float dY, float dZ, float dt)
 {
     int curSx, curSy, sx, sy, sz, ti; 
     unsigned int localGxMin, localGxMax, localGyMin, localGyMax, curGx, curGy;
@@ -1009,7 +1048,7 @@ void getComShotTraces(FILE* suFile, SuTrace* traces, float* tr, int* trc, unsign
             printf("getSuTrace failed!\n");
             exit(0);
         }
-        if (fread(traces[curTraceNumber].data, 1, TD, suFile) != TD) {
+        if (fread(&(tracesData[curTraceNumber*ns]), 1, TD, suFile) != TD) {
             printf("getSuTrace failed!\n");
             exit(0);
         }
@@ -1042,11 +1081,16 @@ void getComShotTraces(FILE* suFile, SuTrace* traces, float* tr, int* trc, unsign
         }
         
 
+	
         //Increment variables
         (*traceNumber)++;
         curTraceNumber++;
         
-        
+
+        tracesC[curTraceNumber]   = (curGx-localGxMin)/dX;
+	tracesC[curTraceNumber+1] = (curGy-localGyMin)/dY;
+	tracesC[curTraceNumber+2] = 0;            
+
         //Get Next Sx and Sy   
         if(*traceNumber < ntt)
         {
@@ -1071,15 +1115,16 @@ void getComShotTraces(FILE* suFile, SuTrace* traces, float* tr, int* trc, unsign
     
     for (ti = 0; ti < ns; ti++) {
         tr[ti] = source(ti*dt);
-        //printf("tr[%d] = %.3f\n", ti, tr[ti]);
+        printf("tr[%d] = %.3f\n", ti, tr[ti]);
     }
     
     //Converting sx, sy and sx to coordinates
     trc[0] = (sx-localGxMin)/dX;
     trc[1] = (sy-localGyMin)/dY;
     trc[2] = sz/dZ;            
-    
-    
+   
+     
+   
     //Calculate local bounds and local velocity model size
     *localGxMinC = (localGxMin-gxMin)/dX;
     *localGyMinC = (localGyMin-gyMin)/dY;
