@@ -27,6 +27,8 @@
 //gx       3720 - 11840
 //gy       500 - 8660
 
+//Investigar u.pn igual, restrição espacial, melhorar restrições (sdt), melhorar funções e multiplos tiros, condição de imagem 
+
 #define TH 	240 	// Trace Header bytes
 #define ncx 	5 	// number of coefficients of the finite difference in x: order/2 + 1
 #define ncy 	5 	// number of coefficients of the finite difference in y: order/2 + 1
@@ -538,7 +540,7 @@ int main(int argc, char* argv[]) {
     		    //printf("ti = %d Passou de iTracesData\n", ti);		    
                     if(my_rank == 0)
                     {
-                        printf("ti: %d\tdiv: %.2f\tfI: %d\tcI: %d\t fCoef: %.2f\t cCoef: %.2f\ttr[fI]: %.3f\ttr[cI]: %.3f\tstr[t]: %.3f\n", ti, divisor, fIndex, cIndex, fCoef, cCoef, tr[fIndex], tr[cIndex], str[ti]);
+                        //printf("ti: %d\tdiv: %.2f\tfI: %d\tcI: %d\t fCoef: %.2f\t cCoef: %.2f\ttr[fI]: %.3f\ttr[cI]: %.3f\tstr[t]: %.3f\n", ti, divisor, fIndex, cIndex, fCoef, cCoef, tr[fIndex], tr[cIndex], str[ti]);
                     }
                 }
                 else
@@ -547,11 +549,14 @@ int main(int argc, char* argv[]) {
                     str[ti] = tr[trIndex];
 		    if(my_rank == 0)
                     {
-                        printf("tr[%d]: %.3f\tstr[%d]: %.3f\n", trIndex, tr[trIndex], ti, str[ti]);
+                        //printf("tr[%d]: %.3f\tstr[%d]: %.3f\n", trIndex, tr[trIndex], ti, str[ti]);
                     }
 		    for (i = 0; i < curTraceNumber; i++)
                     {
 		    	iTracesData[(int) ns*i+ti] = tracesData[(int) ns*i+trIndex];
+			//if(i == 60)
+			//	printf("iTracesD[]: %.3f\n", ns*i+ti, (int) ns*i+ti, iTracesData[(int) ns*i+ti]);
+
 		    }
                 }
             }
@@ -565,17 +570,24 @@ int main(int argc, char* argv[]) {
 		for (i = 0; i < curTraceNumber; i++)
                 {
 			iTracesData[(int) ns*i+ti] = tracesData[(int) ns*i+trIndex];
+			//printf("iTracesD[%d:%d]: %.3f\n", ns*i+ti, (int) ns*i+ti, iTracesData[(int) ns*i+ti]);
+
 		}
 
 		if(my_rank == 0)
                 {
-                	printf("str[%d]: %.3f\ttr[%d]: %.3f\n", ti, str[ti], trIndex, tr[trIndex]);
+                	//printf("str[%d]: %.3f\ttr[%d]: %.3f\n", ti, str[ti], trIndex, tr[trIndex]);
                 }
 	    }
 
             printf("Nao passou no teste temporal 2\n");		
-            propagation( &(vel[localGxMinC*Ybi*Zbi + localGyMinC*Zbi]), localXi, localYi, Yi, Zi, dX, dY, dZ, str, sTi, sdt, trc, Ntr, 100, fileName, bw, my_rank, shotNumber, 1);
+            //propagation( &(vel[localGxMinC*Ybi*Zbi + localGyMinC*Zbi]), localXi, localYi, Yi, Zi, dX, dY, dZ, str, sTi, sdt, trc, Ntr, 100, fileName, bw, my_rank, shotNumber, 1);
 	    
+	    for (ti = 0; ti < sTi-divisor; ti++)
+            {
+		printf("i = %d\tiTracesD[%d]: %.3f\n", 60, ns*60+ti, iTracesData[ns*60+ti]);	
+	    }
+	
 	    //Update propagation filename
 	    sprintf(fileName, "retroP_%d.bin", shotNumber);
             propagation( &(vel[localGxMinC*Ybi*Zbi + localGyMinC*Zbi]), localXi, localYi, Yi, Zi, dX, dY, dZ, iTracesData, sTi, sdt, tracesC, curTraceNumber, 100, fileName, bw, my_rank, shotNumber, -1);
@@ -852,6 +864,7 @@ void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Yi,
                 //printf("Antes  Sub Rank: %d\tTi = %d\tti = %d\tu.pn[%lu] = %.3f\n", my_rank, Ti, ti, indb, u.pn[indb]);
                 u.pn[indb] -= vel[ivb]*tr[ntr*Ti + ti];
                 printf("Rank: %d\tpMode = %d\tTi = %d\tti = %d\tu.pn[%lu] = %.3f\n", my_rank, pMode, Ti, ti, indb, u.pn[indb]);
+		//Investigar pq u.pn é o mesmo para todos ntr
 	}// */
     
     
@@ -1053,6 +1066,10 @@ void getComShotTraces(FILE* suFile, SuTrace* traces, float* tracesData, int* tra
             exit(0);
         }
         
+	//Invert data bytes 
+        for (ti = 0; ti < ns; ti++) {
+		invBytes(&(tracesData[curTraceNumber*ns+ti]), sizeof(float));     
+    	}
         
         //Get Current Gx and Gy
         curGx = traces[curTraceNumber].gx;
