@@ -7,6 +7,8 @@
 #include <float.h>
 #include <math.h>
 #include "field.c"
+#include <time.h>
+
 
 // Exemplo de compilação do programa
 // mpicc -g -Wall -o mpi_prop_working.bin mpi_prop_working.c
@@ -245,7 +247,10 @@ int main(int argc, char* argv[]) {
     MPI_Comm_size(comm, &comm_sz);
     MPI_Comm_rank(comm, &my_rank);
     
-    
+
+
+    clock_t start = clock(), diff;
+
     // Check command line arguments
     if (argc != 16) 
     {
@@ -485,7 +490,9 @@ int main(int argc, char* argv[]) {
         
         //printf("My_rank: %u\tNumberShot: %u\tLocalXi: %u\tLocalYi: %u\tlocalGxMinC = %u\tlocalGyMinC = %u\t numTraco: %lu\n", my_rank, shotNumber, localXi, localYi, localGxMinC, localGyMinC, curTraceNumber);
 
-        
+        printf("My_rank: %u\tNumberShot: %u\tLocalXi: %u\tLocalYi: %u\tZi: %d\t numTraco: %lu\n", my_rank, shotNumber, localXi, localYi, Zi, curTraceNumber);
+
+
         //printf("Fonte:\tTrc[0]: %d\tTrc[1]: %d\t Trc[2]: %d\n", trc[0], trc[1], trc[2]);
         //printf("Geofone1:\tTrc[0]: %d\tTrc[1]: %d\t Trc[2]: %d\n", tracesC[0], tracesC[1], tracesC[2]);
         //printf("Geofone-1:\tTrc[0]: %d\tTrc[1]: %d\t Trc[2]: %d\n", tracesC[0+(curTraceNumber-1)*3], tracesC[1+(curTraceNumber-1)*3], tracesC[2+(curTraceNumber-1)*3]);
@@ -512,12 +519,9 @@ int main(int argc, char* argv[]) {
         //Update propagation filename
         sprintf(fileName, "direta_%d.bin", shotNumber);                     
         
-        propagation( &(vel[localGxMinC*Ybi*Zbi + localGyMinC*Zbi]), localXi, localYi, Yi, Zi, sdX, sdY, sdZ, tr, sTi, sdt, trc, Ntr, 100, fileName, bw, my_rank, shotNumber, 1, divisor, sDivisor, sDivY, sDivZ); //Alterar dX, dY, dZ, sDivisor, Yi, Zi
-     
-        //Update propagation filename
- 	sprintf(fileName, "retroP_%d.bin", shotNumber);
+        propagation( &(vel[localGxMinC*Ybi*Zbi + localGyMinC*Zbi]), localXi, localYi, Yi, Zi, sdX, sdY, sdZ, tr, sTi, sdt, trc, Ntr, 1, fileName, bw, my_rank, shotNumber, 1, divisor, sDivisor, sDivY, sDivZ); //Alterar dX, dY, dZ, sDivisor, Yi, Zi
 
-        propagation( &(vel[localGxMinC*Ybi*Zbi + localGyMinC*Zbi]), localXi, localYi, Yi, Zi, sdX, sdY, sdZ, tracesData, sTi, sdt, tracesC, curTraceNumber, 100, fileName, bw, my_rank, shotNumber, -1, divisor, sDivisor, sDivY, sDivZ);  //Alterar dX, dY, dZ, sDivisor, Yi, Zi
+        propagation( &(vel[localGxMinC*Ybi*Zbi + localGyMinC*Zbi]), localXi, localYi, Yi, Zi, sdX, sdY, sdZ, tracesData, sTi, sdt, tracesC, curTraceNumber, 1, fileName, bw, my_rank, shotNumber, -1, divisor, sDivisor, sDivY, sDivZ);  //Alterar dX, dY, dZ, sDivisor, Yi, Zi
 
 
         
@@ -559,7 +563,11 @@ int main(int argc, char* argv[]) {
      *   free(u_i); 
      *   free(u_r);
      */
-    
+
+    diff = clock() - start;
+    unsigned long sec = diff / CLOCKS_PER_SEC;
+
+    printf("Time taken %lu seconds", sec);  
     //End of MPI Processes
     MPI_Finalize();
     
@@ -678,12 +686,14 @@ void SwapPointers(float **pa, float **pb) {
  * bw: border width
  */
 void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Yi, int Zi, float dx, float dy, float dz, float *tr, unsigned short Ti, float dt, int *trc, int Ntr, int wri, char *wffn, int bw, int my_rank, unsigned int shotNumber, short pMode, double divisor, double sDivisor, double sDivY, double sDivZ) {
-    int xbi, ybi, zbi, ti, c, ntr, fIndex, cIndex, xIndex, yIndex, zIndex; // auxiliary variables
+    int xi, yi, zi, xbi, ybi, zbi, ti, c, ntr, fIndex, cIndex, xIndex, yIndex, zIndex; // auxiliary variables
     unsigned long localXbi, localYbi, Ybi, Zbi, indb, ivb;
     float fdx, fdy, fdz, fCoef, cCoef; // auxiliary variables
     u_t u; // wavefield
     char fileName [40];
-    FILE *wff2; // Wavefield record file
+    float *image, *direta;
+    FILE *wff;
+    //FILE *wff2; // Wavefield record file
     //float cx[ncx] = {-2.847222222, 1.6, -0.2, 0.025396825, -0.001785714}; // coefficients of the finite difference in x
     //float cy[ncy] = {-2.847222222, 1.6, -0.2, 0.025396825, -0.001785714}; // coefficients of the finite difference in y
     //float cz[ncz] = {-2.847222222, 1.6, -0.2, 0.025396825, -0.001785714}; // coefficients of the finite difference in z
@@ -691,14 +701,7 @@ void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Yi,
     float cx[ncx] = {-205.0/72.0, 1.6, -0.2, 8.0/315.0, -1.0/560.0}; // coefficients of the finite difference in x
     float cy[ncy] = {-205.0/72.0, 1.6, -0.2, 8.0/315.0, -1.0/560.0}; // coefficients of the finite difference in y
     float cz[ncz] = {-205.0/72.0, 1.6, -0.2, 8.0/315.0, -1.0/560.0}; // coefficients of the finite difference in z
-    
-    FILE *wff = fopen(wffn,"wb"); // Wafield record file
-    
-    // Check the opening file
-    if (!wff) {
-        printf("Failed opening file.\n");
-        return;
-    }
+     
     
     // Auxiliary variables initialization
     localXbi = localXi + 2*bw;
@@ -717,7 +720,16 @@ void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Yi,
         printf("Memory allocation failed: u.cur.\n");
         return;      
     }
-    
+    direta = (float *) calloc(localXi*localYi*Zi,sizeof(float));
+    if (u.cur == NULL) {
+        printf("Memory allocation failed: u.cur.\n");
+        return;
+    }    
+    image = (float *) calloc(localXi*localYi*Zi,sizeof(float));
+    if (u.cur == NULL) {
+        printf("Memory allocation failed: u.cur.\n");
+        return;
+    } 
     printf("u Size: %lu\n", localXbi*localYbi*Zbi);
     printf("Rank: %d\tComputando tiro = %u\n", my_rank, shotNumber);
     printf("Ti = %d\n", Ti);
@@ -812,34 +824,68 @@ void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Yi,
 		if ((ti+1)%wri == 0 || (wri > 0 && ti == 10)) {
 		    if(pMode >= 0)
 		    {		
-		    	sprintf(fileName, "./pDireta/direta_%d_%d.bin", shotNumber,ti);	
+			wff = fopen(wffn,"wb"); // Wafield record file
+    
+			// Check the opening file
+		    	if (!wff) {
+			   printf("Failed opening file.\n");
+			   return;
+		    	}
+
+		    	for (xbi = bw; xbi < localXbi-bw; xbi++) {
+			   for (ybi = bw; ybi < localYbi-bw; ybi++) {
+			    	if (fwrite(&u.cur[xbi*localYbi*Zbi + ybi*Zbi + bw], sizeof(float), Zi, wff) != Zi) {
+					printf("Failed writing wavefield file\n");
+					return;
+			    	}	
+			   }	
+		    	}
 		    }
 		    else
 		    {
-			sprintf(fileName, "./pDireta/retroP_%d_%d.bin", shotNumber,ti);	
-		    }
-		    
-		    wff2 = fopen(fileName,"wb"); 
-		    
-		    for (xbi = bw; xbi < localXbi-bw; xbi++) {
-			for (ybi = bw; ybi < localYbi-bw; ybi++) {
-			    //printf("u atual: %.3f\n", u.cur[xbi*localYbi*Zbi + ybi*Zbi + bw]); 
-			    if (fwrite(&u.cur[xbi*localYbi*Zbi + ybi*Zbi + bw], sizeof(float), Zi, wff2) != Zi) {
-				printf("Failed writing wavefield file\n");
-				return;
-			    }
-			}
-		    }
+			wff = fopen(wffn,"rb"); // Wafield record file
+    
+			// Check the opening file
+		    	if (!wff) {
+			   printf("Failed opening file.\n");
+			   return;
+		    	}
+			fseek(wff, -localXi*localYi*Zi*sizeof(float), SEEK_END);
+			if (fread(direta, sizeof(float), localXi*localYi*Zi, wff) != localXi*localYi*Zi) {
+	                   printf("getSuTrace failed!\n");
+                    	   exit(0);
+                	}
 
-		    fclose(wff2);
-		}
+			
+		    	for (xi = 0; xi < localXi; xi++) {
+			   for (yi = 0; yi < localYi; yi++) {				
+                		for(zi = 0; zi < Zi; zi++)
+				{
+
+				   image[xi*localYi*Zi + yi*Zi + zi] += direta[xi*localYi*Zi + yi*Zi + zi] * u.cur[(xi+bw)*localYi*Zi + (yi+bw)*Zi + bw];
+				}
+			   }
+			}	               		   
+	     	   }
+	     }
 	}
     }
-    
+
+    sprintf(fileName, "image_%d.bin", shotNumber);
+    FILE *imageCond = fopen(fileName,"wb");
+
+    if (fwrite(image, sizeof(float),localXi*localYi*Zi, imageCond) != localXi*localYi*Zi) {
+	printf("Failed writing wavefield file\n");
+	return;
+    }
+   
     // Free memory
     free(u.pn);
     free(u.cur);
+    free(image);
+    free(direta);
     fclose(wff);
+    fclose(imageCond);
 }
 
 
