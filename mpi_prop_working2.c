@@ -28,6 +28,10 @@
 //gy       500 - 8660
 
 
+//Calcular tamanho de direta_0.bin
+//Verificar erro
+
+
 //Melhorar uso de memória na interpolação
 //Aplicar Restrição espacial
 //Verificar pq primeiro retroP é 0
@@ -519,10 +523,10 @@ int main(int argc, char* argv[]) {
         //Update propagation filename
         sprintf(fileName, "direta_%d.bin", shotNumber);                     
         
-        propagation( &(vel[localGxMinC*Ybi*Zbi + localGyMinC*Zbi]), localXi, localYi, Yi, Zi, sdX, sdY, sdZ, tr, sTi, sdt, trc, Ntr, 1, fileName, bw, my_rank, shotNumber, 1, divisor, sDivisor, sDivY, sDivZ); //Alterar dX, dY, dZ, sDivisor, Yi, Zi
+        /*propagation( &(vel[localGxMinC*Ybi*Zbi + localGyMinC*Zbi]), localXi, localYi, Yi, Zi, sdX, sdY, sdZ, tr, sTi, sdt, trc, Ntr, 1, fileName, bw, my_rank, shotNumber, 1, divisor, sDivisor, sDivY, sDivZ); //Alterar dX, dY, dZ, sDivisor, Yi, Zi
 
-        propagation( &(vel[localGxMinC*Ybi*Zbi + localGyMinC*Zbi]), localXi, localYi, Yi, Zi, sdX, sdY, sdZ, tracesData, sTi, sdt, tracesC, curTraceNumber, 1, fileName, bw, my_rank, shotNumber, -1, divisor, sDivisor, sDivY, sDivZ);  //Alterar dX, dY, dZ, sDivisor, Yi, Zi
-
+        propagation( &(vel[localGxMinC*Ybi*Zbi + localGyMinC*Zbi]), localXi, localYi, sYi, sZi, sdX, sdY, sdZ, tracesData, sTi, sdt, tracesC, curTraceNumber, 1, fileName, bw, my_rank, shotNumber, -1, divisor, sDivisor, sDivY, sDivZ);  //Alterar dX, dY, dZ, sDivisor, Yi, Zi
+*/
 
         
         shotNumber++;//Update number of shot
@@ -721,12 +725,12 @@ void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Yi,
         return;      
     }
     direta = (float *) calloc(localXi*localYi*Zi,sizeof(float));
-    if (u.cur == NULL) {
+    if (direta == NULL) {
         printf("Memory allocation failed: u.cur.\n");
         return;
     }    
     image = (float *) calloc(localXi*localYi*Zi,sizeof(float));
-    if (u.cur == NULL) {
+    if (image == NULL) {
         printf("Memory allocation failed: u.cur.\n");
         return;
     } 
@@ -737,20 +741,34 @@ void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Yi,
     
     int inc, sign;
     int firstI, lastI;    
-
+int size;
     if(pMode >= 0)
     {//Propagation
 	firstI = 0;
 	lastI = Ti;
 	sign = 1;
 	inc = 1;
+	wff = fopen(wffn,"wb"); // Wafield record file
+
+	// Check the opening file
+    	if (!wff) {
+	   printf("Failed opening file.\n");
+	   return;
+	}
     }
     else
     {//Backpropagation
  	firstI = Ti-1;
-	lastI = 0;
+	lastI = 1;
 	sign = -1;
  	inc = -1;
+
+	//wff = fopen(wffn,"rb"); // Wafield record file
+        //fseek(wff, (firstI+1)*localXi*localYi*Zi*sizeof(float), SEEK_SET);
+	
+	//fseek(wff, 0, SEEK_END);
+	//size = ftell(wff);
+	//printf("Ate o final wff tem %d bytes\n", size);
     }
  
     // Propagate
@@ -810,7 +828,7 @@ void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Yi,
 
                 	u.pn[indb] -= vel[ivb] * (fCoef*tr[ntr*Ti+fIndex]+cCoef*tr[ntr*Ti+cIndex]);
 
-                printf("Rank: %d\tti = %d\tTi = %d\tpMode = %d\tu.pn[%lu] = %.3f\n", my_rank, ti, Ti, pMode, indb, u.pn[indb]);
+                printf("Rank: %d\tti = %d\tntr = %d\tTi = %d\tpMode = %d\tu.pn[%lu] = %.3f\n", my_rank, ti, ntr, Ti, pMode, indb, u.pn[indb]);
 		//Investigar pq u.pn é o mesmo para todos ntr
 	}// */
     
@@ -821,18 +839,10 @@ void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Yi,
 
 	// Write wavefield in a file
 	if (wri != 0) {
-		if ((ti+1)%wri == 0 || (wri > 0 && ti == 10)) {
+		if ((ti+1)%wri == 0 || ti == 10) {
 		    if(pMode >= 0)
 		    {		
-			wff = fopen(wffn,"wb"); // Wafield record file
-    
-			// Check the opening file
-		    	if (!wff) {
-			   printf("Failed opening file.\n");
-			   return;
-		    	}
-
-		    	for (xbi = bw; xbi < localXbi-bw; xbi++) {
+		  	for (xbi = bw; xbi < localXbi-bw; xbi++) {
 			   for (ybi = bw; ybi < localYbi-bw; ybi++) {
 			    	if (fwrite(&u.cur[xbi*localYbi*Zbi + ybi*Zbi + bw], sizeof(float), Zi, wff) != Zi) {
 					printf("Failed writing wavefield file\n");
@@ -844,17 +854,23 @@ void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Yi,
 		    else
 		    {
 			wff = fopen(wffn,"rb"); // Wafield record file
-    
+			    
+
 			// Check the opening file
-		    	if (!wff) {
+			if (!wff) {
 			   printf("Failed opening file.\n");
 			   return;
-		    	}
-			fseek(wff, -localXi*localYi*Zi*sizeof(float), SEEK_END);
-			if (fread(direta, sizeof(float), localXi*localYi*Zi, wff) != localXi*localYi*Zi) {
-	                   printf("getSuTrace failed!\n");
-                    	   exit(0);
+			}//*/
+
+			//fseek(wff, -localXi*localYi*Zi*sizeof(float), SEEK_CUR);
+			fseek(wff, ti*localXi*localYi*Zi*sizeof(float), SEEK_SET);
+			int a = 0;
+			a = fread(direta, sizeof(float), localXi*localYi*Zi, wff);
+			if(a != localXi*localYi*Zi) {			   
+	                   printf("Read %s file failed! Leu %d bytes e deveria ler %d bytes\n", wffn, a, localXi*localYi*Zi);
+			   exit(0);
                 	}
+			//printf("Leu e Passou!\n");
 
 			
 		    	for (xi = 0; xi < localXi; xi++) {
@@ -862,10 +878,12 @@ void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Yi,
                 		for(zi = 0; zi < Zi; zi++)
 				{
 
-				   image[xi*localYi*Zi + yi*Zi + zi] += direta[xi*localYi*Zi + yi*Zi + zi] * u.cur[(xi+bw)*localYi*Zi + (yi+bw)*Zi + bw];
+				   image[xi*localYi*Zi + yi*Zi + zi] += direta[xi*localYi*Zi + yi*Zi + zi] * u.cur[(xi+bw)*localYi*Zi + (yi+bw)*Zi + zi+bw];
 				}
 			   }
-			}	               		   
+			}
+
+			fclose(wff);				    
 	     	   }
 	     }
 	}
@@ -875,7 +893,7 @@ void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Yi,
     FILE *imageCond = fopen(fileName,"wb");
 
     if (fwrite(image, sizeof(float),localXi*localYi*Zi, imageCond) != localXi*localYi*Zi) {
-	printf("Failed writing wavefield file\n");
+	printf("Failed writing image file\n");
 	return;
     }
    
@@ -884,7 +902,11 @@ void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Yi,
     free(u.cur);
     free(image);
     free(direta);
-    fclose(wff);
+    if(pMode >= 0)
+    {
+    	fclose(wff);           		  
+    }
+    printf("Fechou arquivo"); 
     fclose(imageCond);
 }
 
@@ -940,7 +962,7 @@ void readVelData(float *vel, float *vMin, float *vMax, float *sdt, float *rdt, u
     }
 
     //Test Spatial Restriction
-    *rds = *vMin/(4.0*40);
+    *rds = *vMin/(4.0);
     if(*rds < maxDs(dX,dY,dZ))
     {
 	*sDivisor = ceil(dX/(*rds)); //Consider dX = dY = dZ
@@ -982,7 +1004,7 @@ void readVelData(float *vel, float *vMin, float *vMax, float *sdt, float *rdt, u
     printf("vMax = %.3f\n", *vMax);  */
 
     
-        // Optimization
+    // Optimization
     for (xi = 0; xi < Xi; xi++) {
         for (yi = 0; yi < Yi; yi++) {
             for (zi = 0; zi < Zi; zi++) {
