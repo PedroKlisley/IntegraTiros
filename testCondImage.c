@@ -140,7 +140,6 @@ typedef struct { // 240-byte Trace Header + Data
 
 //Function declarations
 void usage(char* errorMessage, int rank);
-void printFile(SuTrace* traces, unsigned long localTraceNumber, unsigned int TD, float* velocity_model_data,  unsigned long vModelSize, int my_rank);
 void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Yi, int Zi, int sZi, float dx, float dy, float dz, float *tr, unsigned short Ti, float sdt, int *trc, int Ntr, int wri, char *wffn, int bw, int my_rank, unsigned int shotNumber, short pMode, double divisor, double sDivisor, double sDivY, double sDivZ, float *localImage, unsigned short sTi);
 void invBytes(void * valor, int nBytes);
 float source(float t);
@@ -379,7 +378,7 @@ int main(int argc, char* argv[]) {
     
     rest = shotLimit % comm_sz;
     localCeilShotNumber = (int) ceil((double)shotLimit/(double)comm_sz);
-    localFirstShotNumber = my_rank*localCeilShotNumber + 150;
+    localFirstShotNumber = my_rank*localCeilShotNumber + 2793;
     shotNumber = 0;
     
     
@@ -522,7 +521,7 @@ int main(int argc, char* argv[]) {
             
         
         //Update propagation filename
-        sprintf(fileName, "condImageSem40/diretaTest_%d.bin", shotNumber);                     
+        sprintf(fileName, "condImageResEsp/diretaTest_%d.bin", shotNumber);                     
         
 	localImage = (float *) malloc(localXi*localYi*sZi*sizeof(float));
  
@@ -949,7 +948,7 @@ void propagation(float *vel, unsigned int localXi, unsigned int localYi, int Yi,
 	}
     }
 
-    sprintf(fileName, "condImageSem40/imageTest_%d.bin", shotNumber);
+    sprintf(fileName, "condImageResEsp/imageTest_%d.bin", shotNumber);
     FILE *imageCond = fopen(fileName,"wb");
 
     if (fwrite(image, sizeof(float),localXi*localYi*Zi, imageCond) != localXi*localYi*Zi) {
@@ -1022,7 +1021,7 @@ void readVelData(float *vel, float *vMin, float *vMax, float *sdt, float *rdt, u
     }
 
     //Test Spatial Restriction
-    *rds = *vMin/(4.0);
+    *rds = *vMin/(40.0*4.0);
     if(*rds < maxDs(dX,dY,dZ))
     {
 	*sDivisor = ceil(dX/(*rds)); //Consider dX = dY = dZ
@@ -1241,57 +1240,3 @@ void getComShotTraces(FILE* suFile, SuTrace* traces, float* tracesData, int* tra
     *localYi = (localGyMax-localGyMin)/sdY + 1;
 }
     
-    
-    
-void printFile(SuTrace* traces, unsigned long localTraceNumber, unsigned int TD, float* velocity_model_data, unsigned long vModelSize, int my_rank)
-{
-    //Output Su Files
-    char fileName [20];
-    sprintf(fileName, "output_%d.su", my_rank);
-    FILE *outputSu_file;
-    outputSu_file = fopen(fileName, "wb");
-    if (outputSu_file == NULL)
-    {
-        fprintf(stderr, "Erro ao abrir arquivo outputSU\n");
-        exit(0);
-    }
-    
-    int i;
-    
-    for(i = 0; i < localTraceNumber; i++)
-    {
-        fwrite(&(traces[i]), 1, TH, outputSu_file);
-        fflush(outputSu_file);
-        fwrite(traces[i].data, 1, TD, outputSu_file);
-        fflush(outputSu_file);
-    }
-    
-    fclose(outputSu_file);
-    
-    printf("My_rank: %d\tArquivo .su exportado\n", my_rank);
-    
-    //Output Velocity Model files
-    FILE *output_file;
-    sprintf(fileName, "vModel_%d.ad", my_rank);
-    output_file = fopen(fileName, "wb");
-    
-    if (output_file == NULL)
-    {
-        fprintf(stderr, "Erro ao abrir arquivo output\n");
-        exit(0);
-    }  
-    
-    
-    fwrite(velocity_model_data, 1, vModelSize, output_file);
-    fflush(output_file);
-    
-    fclose(output_file);
-    printf("My_rank: %d\tArquivo de modelo de velocidades exportado\n", my_rank);
-} 
-
-
-
-
-
-#include <stdio.h>
-#include <stdlib.h>
